@@ -29,8 +29,11 @@
   #wrap {
     position: relative;
     /* Keep 4:3 aspect ratio, fit screen */
+    aspect-ratio: 4 / 3;
     width: min(100vw, calc(100vh * 4 / 3));
     height: min(100vh, calc(100vw * 3 / 4));
+    max-width: 100vw;
+    max-height: 100vh;
   }
   canvas {
     display: block;
@@ -77,7 +80,7 @@
   }
   #dropBtn {
     right: 3vmin;
-    bottom: 3vmin;
+    bottom: 5vmin;       /* leave room for time bar */
     width: clamp(70px, 14vmin, 130px);
     height: clamp(70px, 14vmin, 130px);
     border-radius: 50%;
@@ -209,6 +212,7 @@
   let currentLevel = 1;
   let totalScore = 0;
   let popups = [];   // floating "+50" texts
+  let inputLockUntil = 0;  // ignore taps until this timestamp (prevents tap-through on level start)
 
   // Hand-tuned level curve. Difficulty rises gradually:
   //   - early levels: mostly gold, slow swing, easy targets
@@ -329,6 +333,7 @@
 
     running = true;
     lastTime = performance.now();
+    inputLockUntil = lastTime + 400;  // brief grace period so tap-through can't drop the hook immediately
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(loop);
   }
@@ -353,7 +358,9 @@
   }
 
   function dropHook() {
-    if (running && hook.state === 'swing') hook.state = 'extend';
+    if (!running) return;
+    if (performance.now() < inputLockUntil) return;
+    if (hook.state === 'swing') hook.state = 'extend';
   }
 
   function update(dt) {
@@ -397,13 +404,16 @@
         if (hook.caught) {
           state.score += hook.caught.value;
           ui.score.textContent = state.score;
-          const isGoodLoot = hook.caught.kind === 'diamond' || hook.caught.kind.startsWith('gold');
+          const isDiamond = hook.caught.kind === 'diamond';
+          const isGoodLoot = isDiamond || hook.caught.kind.startsWith('gold');
           popups.push({
-            x: miner.x,
-            y: miner.y + 20,
+            x: miner.x + rand(-30, 30),
+            y: miner.y + 10,
             text: '+' + hook.caught.value,
-            color: isGoodLoot ? '#FFD700' : '#bbb',
-            life: 1.0,
+            color: isDiamond ? '#5DE2FF' : (isGoodLoot ? '#FFD700' : '#bbb'),
+            size: isDiamond ? 34 : (hook.caught.value >= 250 ? 30 : 24),
+            life: 1.6,
+            maxLife: 1.6,
           });
           items = items.filter(i => i !== hook.caught);
           hook.caught = null;
@@ -412,7 +422,7 @@
       }
     }
 
-    for (const p of popups) { p.y -= 30 * dt; p.life -= dt; }
+    for (const p of popups) { p.y -= 50 * dt; p.life -= dt; }
     popups = popups.filter(p => p.life > 0);
   }
 
@@ -452,11 +462,11 @@
     // score popups
     for (const p of popups) {
       ctx.save();
-      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
       ctx.fillStyle = p.color;
       ctx.strokeStyle = '#000';
-      ctx.lineWidth = 3;
-      ctx.font = 'bold 24px system-ui, sans-serif';
+      ctx.lineWidth = 4;
+      ctx.font = `bold ${p.size}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.strokeText(p.text, p.x, p.y);
       ctx.fillText(p.text, p.x, p.y);
@@ -605,7 +615,7 @@
   miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
   hook = resetHook();
   items = [];
-  state = { score: 0, target: 650, timeLeft: 60, maxTime: 60 };
+  state = { score: 0, target: LEVELS[0].target, timeLeft: LEVELS[0].time, maxTime: LEVELS[0].time };
   draw();
 })();
 </script>
