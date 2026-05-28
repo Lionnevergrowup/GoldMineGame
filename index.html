@@ -2,85 +2,139 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
 <title>黄金矿工 Gold Miner</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   html, body {
     height: 100%;
+    width: 100%;
     background: #1a1a2e;
-    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     color: #fff;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
   }
   body {
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
   #wrap {
     position: relative;
-    width: 800px;
-    max-width: 100vw;
+    /* Keep 4:3 aspect ratio, fit screen */
+    width: min(100vw, calc(100vh * 4 / 3));
+    height: min(100vh, calc(100vw * 3 / 4));
   }
   canvas {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
     background: linear-gradient(#87CEEB 0%, #87CEEB 25%, #8B4513 25%, #654321 100%);
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    cursor: pointer;
+    touch-action: none;
   }
   #hud {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    padding: 12px 16px;
+    padding: 14px 18px;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    font-weight: 700;
+    font-weight: 800;
     text-shadow: 2px 2px 0 #000;
-    font-size: 18px;
+    font-size: clamp(14px, 2.4vmin, 22px);
   }
   #hud .col { display: flex; flex-direction: column; gap: 4px; }
   #hud .right { text-align: right; }
+
+  /* Big transparent drop button — bottom-right thumb reach on iPad/iPhone */
+  .ctrl {
+    position: absolute;
+    pointer-events: auto;
+    border: 3px solid rgba(255, 215, 0, 0.85);
+    background: rgba(255, 215, 0, 0.18);
+    color: #FFD700;
+    text-shadow: 0 2px 6px #000, 0 0 4px #000;
+    font-weight: 900;
+    font-family: inherit;
+    cursor: pointer;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    transition: transform 0.05s, background 0.05s;
+    touch-action: manipulation;
+  }
+  .ctrl:active {
+    background: rgba(255, 215, 0, 0.45);
+    transform: scale(0.95);
+  }
+  #dropBtn {
+    right: 4vmin;
+    bottom: 4vmin;
+    width: clamp(80px, 18vmin, 160px);
+    height: clamp(80px, 18vmin, 160px);
+    border-radius: 50%;
+    font-size: clamp(16px, 3.2vmin, 28px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+    text-align: center;
+  }
+  #dropBtn .arrow { font-size: clamp(22px, 4.5vmin, 38px); display: block; margin-bottom: 2px; }
+
+  /* Full-canvas invisible tap zone so tapping anywhere also drops */
+  #tapZone {
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+    background: transparent;
+    touch-action: manipulation;
+  }
+
   .overlay {
     position: absolute;
     inset: 0;
-    background: rgba(0,0,0,0.75);
+    background: rgba(0,0,0,0.78);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    pointer-events: auto;
     text-align: center;
-    padding: 24px;
+    padding: 4vmin;
+    pointer-events: auto;
+    z-index: 10;
   }
-  .overlay h1 { font-size: 42px; margin-bottom: 12px; color: #FFD700; }
-  .overlay h2 { font-size: 28px; margin-bottom: 16px; color: #FFD700; }
-  .overlay p { font-size: 16px; line-height: 1.7; margin-bottom: 8px; max-width: 520px; }
+  .overlay h1 { font-size: clamp(28px, 6vmin, 56px); margin-bottom: 12px; color: #FFD700; }
+  .overlay h2 { font-size: clamp(22px, 4.5vmin, 40px); margin-bottom: 14px; color: #FFD700; }
+  .overlay p { font-size: clamp(14px, 2.6vmin, 22px); line-height: 1.7; margin-bottom: 6px; max-width: 80vw; }
   .overlay button {
-    margin-top: 18px;
-    padding: 12px 32px;
-    font-size: 20px;
+    margin-top: 22px;
+    padding: clamp(12px, 2.2vmin, 18px) clamp(28px, 5vmin, 48px);
+    font-size: clamp(18px, 3.2vmin, 26px);
     background: #FFD700;
     color: #1a1a2e;
     border: none;
-    border-radius: 6px;
+    border-radius: 10px;
+    font-weight: 800;
+    font-family: inherit;
+    touch-action: manipulation;
     cursor: pointer;
-    font-weight: 700;
   }
-  .overlay button:hover { background: #FFA500; }
+  .overlay button:active { background: #FFA500; transform: scale(0.97); }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="game" width="800" height="600"></canvas>
+
   <div id="hud">
     <div class="col">
       <div>分数: <span id="score">0</span></div>
@@ -92,11 +146,14 @@
     </div>
   </div>
 
+  <div id="tapZone"></div>
+  <button id="dropBtn" class="ctrl" aria-label="放钩"><span><span class="arrow">⬇</span>放钩</span></button>
+
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
-    <p>点击屏幕 或 按 空格键 放下抓钩</p>
-    <p>抓住金子、钻石得分；岩石重而少分</p>
-    <p>每关需要达到目标分数才能通过</p>
+    <p>点击右下按钮 或 屏幕任意处 放下抓钩</p>
+    <p>金子、钻石得高分；岩石又重又少分</p>
+    <p>每关在限时内达到目标分数才能通关</p>
     <button id="startBtn">开始游戏</button>
   </div>
 
@@ -126,9 +183,9 @@
     start: $('startScreen'), startBtn: $('startBtn'),
     level_: $('levelScreen'), levelTitle: $('levelTitle'), levelMsg: $('levelMsg'), nextBtn: $('nextBtn'),
     gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'), restartBtn: $('restartBtn'),
+    dropBtn: $('dropBtn'), tapZone: $('tapZone'),
   };
 
-  // Item definitions: kind, color(s), radius, value, weight (reel speed factor: higher = slower)
   const ITEMS = {
     goldS:   { color: '#FFD700', stroke: '#B8860B', r: 14, value: 50,  weight: 1.6 },
     goldM:   { color: '#FFD700', stroke: '#B8860B', r: 22, value: 100, weight: 2.4 },
@@ -138,7 +195,7 @@
     diamond: { color: '#5DE2FF', stroke: '#1B8FB6', r: 10, value: 600, weight: 0.8 },
   };
 
-  let state, items, hook, miner, timer, lastTime, raf;
+  let state, items, hook, miner, lastTime, raf;
   let running = false;
   let currentLevel = 1;
   let totalScore = 0;
@@ -165,7 +222,6 @@
     const minY = GROUND_Y + 60;
     const maxY = H - 30;
     const minX = 30, maxX = W - 30;
-
     for (const [kind, n] of Object.entries(counts)) {
       const def = ITEMS[kind];
       for (let i = 0; i < n; i++) {
@@ -190,13 +246,13 @@
     return {
       x: miner.x,
       y: miner.y + 30,
-      angle: -Math.PI / 2,        // pointing straight down at 0; we use angle from vertical
-      swingSpeed: 1.6,            // rad/sec
+      angle: -Math.PI / 2,
+      swingSpeed: 1.6,
       swingDir: 1,
       length: 30,
-      state: 'swing',             // 'swing' | 'extend' | 'reel'
+      state: 'swing',
       caught: null,
-      reelSpeed: 360,             // px/sec when empty
+      reelSpeed: 360,
     };
   }
 
@@ -245,29 +301,22 @@
   }
 
   function dropHook() {
-    if (hook.state === 'swing') {
-      hook.state = 'extend';
-    }
+    if (running && hook.state === 'swing') hook.state = 'extend';
   }
 
   function update(dt) {
     state.timeLeft -= dt;
     ui.time.textContent = Math.max(0, Math.ceil(state.timeLeft));
-    if (state.timeLeft <= 0) {
-      state.timeLeft = 0;
-      endLevel();
-      return;
-    }
+    if (state.timeLeft <= 0) { state.timeLeft = 0; endLevel(); return; }
 
     if (hook.state === 'swing') {
       hook.angle += hook.swingSpeed * hook.swingDir * dt;
-      const maxA = 1.25;  // about ~72 degrees each side
+      const maxA = 1.25;
       if (hook.angle > maxA) { hook.angle = maxA; hook.swingDir = -1; }
       if (hook.angle < -maxA) { hook.angle = -maxA; hook.swingDir = 1; }
       hook.length = 30;
     } else if (hook.state === 'extend') {
       hook.length += 360 * dt;
-      // out of bounds -> reel
       const tip = hookTip();
       if (tip.y > H + 20 || tip.x < -20 || tip.x > W + 20) {
         hook.state = 'reel';
@@ -305,7 +354,6 @@
   }
 
   function hookTip() {
-    // angle 0 is straight down; convert to canvas coords
     const a = hook.angle;
     return {
       x: miner.x + Math.sin(a) * hook.length,
@@ -314,42 +362,30 @@
   }
 
   function draw() {
-    // sky already from CSS gradient, but also paint to canvas for screenshot
     ctx.fillStyle = '#87CEEB';
     ctx.fillRect(0, 0, W, GROUND_Y);
-    // sun
     ctx.fillStyle = '#FFE066';
     ctx.beginPath(); ctx.arc(W - 80, 60, 30, 0, Math.PI * 2); ctx.fill();
-    // clouds
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     drawCloud(120, 50, 28);
     drawCloud(300, 80, 22);
     drawCloud(560, 40, 26);
 
-    // ground
     const grd = ctx.createLinearGradient(0, GROUND_Y, 0, H);
     grd.addColorStop(0, '#8B5A2B');
     grd.addColorStop(1, '#3E2A14');
     ctx.fillStyle = grd;
     ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-    // grass strip
     ctx.fillStyle = '#3CB371';
     ctx.fillRect(0, GROUND_Y - 6, W, 6);
 
-    // platform for miner
     ctx.fillStyle = '#5C3317';
     ctx.fillRect(miner.x - 50, GROUND_Y - 12, 100, 6);
 
-    // miner body
     drawMiner();
-
-    // rope + hook
     drawRopeAndHook();
-
-    // items
     for (const it of items) drawItem(it);
 
-    // overlay time bar
     const w = (state.timeLeft / state.maxTime) * (W - 40);
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(20, H - 18, W - 40, 8);
@@ -367,34 +403,21 @@
 
   function drawMiner() {
     const { x, y } = miner;
-    // legs
     ctx.fillStyle = '#1f3a8a';
     ctx.fillRect(x - 14, y + 30, 10, 22);
     ctx.fillRect(x + 4, y + 30, 10, 22);
-    // body
     ctx.fillStyle = '#c0392b';
     ctx.fillRect(x - 18, y, 36, 34);
-    // arms
     ctx.fillStyle = '#FFDAB9';
     ctx.fillRect(x - 24, y + 4, 8, 22);
     ctx.fillRect(x + 16, y + 4, 8, 22);
-    // head
     ctx.fillStyle = '#FFDAB9';
-    ctx.beginPath();
-    ctx.arc(x, y - 12, 14, 0, Math.PI * 2);
-    ctx.fill();
-    // helmet
+    ctx.beginPath(); ctx.arc(x, y - 12, 14, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#FFD700';
-    ctx.beginPath();
-    ctx.arc(x, y - 14, 15, Math.PI, 0);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y - 14, 15, Math.PI, 0); ctx.fill();
     ctx.fillRect(x - 17, y - 15, 34, 4);
-    // helmet light
     ctx.fillStyle = '#FFF';
-    ctx.beginPath();
-    ctx.arc(x, y - 22, 4, 0, Math.PI * 2);
-    ctx.fill();
-    // eyes
+    ctx.beginPath(); ctx.arc(x, y - 22, 4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#000';
     ctx.fillRect(x - 5, y - 12, 2, 2);
     ctx.fillRect(x + 3, y - 12, 2, 2);
@@ -410,7 +433,6 @@
     ctx.lineTo(tip.x, tip.y);
     ctx.stroke();
 
-    // hook shape
     const a = hook.angle;
     ctx.save();
     ctx.translate(tip.x, tip.y);
@@ -418,9 +440,7 @@
     ctx.strokeStyle = '#C0C0C0';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 10);
-    ctx.stroke();
+    ctx.moveTo(0, 0); ctx.lineTo(0, 10); ctx.stroke();
     ctx.beginPath();
     ctx.arc(0, 14, 6, Math.PI * 0.15, Math.PI * 0.85, false);
     ctx.stroke();
@@ -431,7 +451,6 @@
     const def = ITEMS[it.kind];
     ctx.save();
     if (it.kind === 'diamond') {
-      // diamond shape
       ctx.fillStyle = def.color;
       ctx.strokeStyle = def.stroke;
       ctx.lineWidth = 2;
@@ -441,38 +460,28 @@
       ctx.lineTo(it.x, it.y + it.r);
       ctx.lineTo(it.x - it.r, it.y);
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      ctx.fill(); ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.6)';
       ctx.beginPath();
       ctx.moveTo(it.x - it.r * 0.4, it.y - it.r * 0.2);
       ctx.lineTo(it.x, it.y - it.r * 0.6);
       ctx.lineTo(it.x + it.r * 0.1, it.y - it.r * 0.2);
-      ctx.closePath();
-      ctx.fill();
+      ctx.closePath(); ctx.fill();
     } else {
-      // gold or rock: circle with shading
       ctx.fillStyle = def.color;
       ctx.strokeStyle = def.stroke;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(it.x, it.y, it.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // highlight
+      ctx.fill(); ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       ctx.beginPath();
       ctx.arc(it.x - it.r * 0.35, it.y - it.r * 0.35, it.r * 0.35, 0, Math.PI * 2);
       ctx.fill();
-      // rock texture
       if (it.kind.startsWith('rock')) {
         ctx.fillStyle = 'rgba(0,0,0,0.25)';
-        ctx.beginPath();
-        ctx.arc(it.x + it.r * 0.3, it.y + it.r * 0.1, it.r * 0.18, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(it.x - it.r * 0.1, it.y + it.r * 0.4, it.r * 0.12, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(it.x + it.r * 0.3, it.y + it.r * 0.1, it.r * 0.18, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(it.x - it.r * 0.1, it.y + it.r * 0.4, it.r * 0.12, 0, Math.PI * 2); ctx.fill();
       }
     }
     ctx.restore();
@@ -487,24 +496,34 @@
     raf = requestAnimationFrame(loop);
   }
 
-  // Input
-  function onAction(e) {
-    if (e) e.preventDefault();
-    if (!running) return;
-    dropHook();
+  // ---- Touch-friendly input ----
+  function bindTap(el, fn) {
+    let handled = false;
+    el.addEventListener('touchstart', e => {
+      e.preventDefault();
+      handled = true;
+      fn();
+    }, { passive: false });
+    el.addEventListener('mousedown', e => {
+      if (handled) { handled = false; return; }
+      e.preventDefault();
+      fn();
+    });
   }
-  canvas.addEventListener('mousedown', onAction);
-  canvas.addEventListener('touchstart', onAction, { passive: false });
-  window.addEventListener('keydown', e => {
-    if (e.code === 'Space' || e.code === 'ArrowDown' || e.code === 'Enter') {
-      onAction(e);
-    }
-  });
+  bindTap(ui.dropBtn, dropHook);
+  bindTap(ui.tapZone, dropHook);
+
+  // Prevent iOS double-tap zoom / gestures globally
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('dblclick', e => e.preventDefault());
 
   ui.startBtn.onclick = () => { totalScore = 0; startLevel(1); };
   ui.restartBtn.onclick = () => { totalScore = 0; startLevel(1); };
+  // also handle touchstart on overlay buttons so iOS responds immediately
+  for (const b of [ui.startBtn, ui.restartBtn, ui.nextBtn]) {
+    b.addEventListener('touchstart', e => { e.preventDefault(); b.click(); }, { passive: false });
+  }
 
-  // initial paint (so canvas isn't blank behind overlay)
   miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
   hook = resetHook();
   items = [];
