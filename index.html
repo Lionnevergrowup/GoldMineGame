@@ -53,6 +53,7 @@
   }
   #hud .col { display: flex; flex-direction: column; gap: 4px; }
   #hud .right { text-align: right; }
+  #hud .total { color: #FFD700; font-size: clamp(12px, 1.8vmin, 16px); opacity: 0.9; }
 
   /* Big transparent drop button — bottom-right thumb reach on iPad/iPhone */
   .ctrl {
@@ -75,19 +76,20 @@
     transform: scale(0.95);
   }
   #dropBtn {
-    right: 4vmin;
-    bottom: 4vmin;
-    width: clamp(80px, 18vmin, 160px);
-    height: clamp(80px, 18vmin, 160px);
+    right: 3vmin;
+    bottom: 3vmin;
+    width: clamp(70px, 14vmin, 130px);
+    height: clamp(70px, 14vmin, 130px);
     border-radius: 50%;
-    font-size: clamp(16px, 3.2vmin, 28px);
+    font-size: clamp(14px, 2.6vmin, 22px);
     display: flex;
     align-items: center;
     justify-content: center;
     line-height: 1.1;
     text-align: center;
+    background: rgba(255, 215, 0, 0.12);
   }
-  #dropBtn .arrow { font-size: clamp(22px, 4.5vmin, 38px); display: block; margin-bottom: 2px; }
+  #dropBtn .arrow { font-size: clamp(20px, 4vmin, 32px); display: block; margin-bottom: 2px; }
 
   /* Full-canvas invisible tap zone so tapping anywhere also drops */
   #tapZone {
@@ -138,7 +140,8 @@
   <div id="hud">
     <div class="col">
       <div>分数: <span id="score">0</span></div>
-      <div>目标: <span id="target">650</span></div>
+      <div>目标: <span id="target">200</span></div>
+      <div class="total">累计: <span id="totalScore">0</span></div>
     </div>
     <div class="col right">
       <div>第 <span id="level">1</span> 关</div>
@@ -151,9 +154,10 @@
 
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
-    <p>点击右下按钮 或 屏幕任意处 放下抓钩</p>
-    <p>金子、钻石得高分；岩石又重又少分</p>
-    <p>每关在限时内达到目标分数才能通关</p>
+    <p>点击右下「放钩」按钮 或 屏幕任意处 都能放钩</p>
+    <p>💎钻石 600　🟡大金250／中100／小50　⬛石头 10／20</p>
+    <p>共 20 关，关卡越往后越难，慢慢提升</p>
+    <p>第 1 关只要 200 分，很轻松上手</p>
     <button id="startBtn">开始游戏</button>
   </div>
 
@@ -164,9 +168,12 @@
   </div>
 
   <div id="gameOverScreen" class="overlay hidden">
-    <h2>游戏结束</h2>
+    <h2>本关未通过</h2>
     <p id="gameOverMsg"></p>
-    <button id="restartBtn">重新开始</button>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+      <button id="retryBtn">重玩本关</button>
+      <button id="restartBtn">从第一关开始</button>
+    </div>
   </div>
 </div>
 
@@ -180,9 +187,11 @@
   const $ = id => document.getElementById(id);
   const ui = {
     score: $('score'), target: $('target'), level: $('level'), time: $('time'),
+    totalScore: $('totalScore'),
     start: $('startScreen'), startBtn: $('startBtn'),
     level_: $('levelScreen'), levelTitle: $('levelTitle'), levelMsg: $('levelMsg'), nextBtn: $('nextBtn'),
-    gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'), restartBtn: $('restartBtn'),
+    gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'),
+    restartBtn: $('restartBtn'), retryBtn: $('retryBtn'),
     dropBtn: $('dropBtn'), tapZone: $('tapZone'),
   };
 
@@ -199,18 +208,53 @@
   let running = false;
   let currentLevel = 1;
   let totalScore = 0;
+  let popups = [];   // floating "+50" texts
+
+  // Hand-tuned level curve. Difficulty rises gradually:
+  //   - early levels: mostly gold, slow swing, easy targets
+  //   - mid: diamonds appear, more rocks, faster swing
+  //   - late: dense layouts, tighter time, fast swing
+  // Targets ≈ 55–70% of max achievable so you don't need a perfect run.
+  const LEVELS = [
+    // L1: tutorial — almost free win
+    { target: 200,  time: 60, swing: 1.10, counts: { goldS:5, goldM:2 } },
+    { target: 350,  time: 60, swing: 1.15, counts: { goldS:5, goldM:3, goldL:1 } },
+    { target: 500,  time: 60, swing: 1.20, counts: { goldS:5, goldM:3, goldL:1, rockS:2, diamond:1 } },
+    { target: 700,  time: 60, swing: 1.25, counts: { goldS:5, goldM:4, goldL:2, rockS:2, rockL:1, diamond:1 } },
+    { target: 900,  time: 55, swing: 1.30, counts: { goldS:6, goldM:4, goldL:2, rockS:3, rockL:1, diamond:1 } },
+    { target: 1150, time: 55, swing: 1.35, counts: { goldS:6, goldM:4, goldL:2, rockS:4, rockL:2, diamond:2 } },
+    { target: 1400, time: 55, swing: 1.40, counts: { goldS:6, goldM:5, goldL:3, rockS:5, rockL:2, diamond:2 } },
+    { target: 1700, time: 50, swing: 1.45, counts: { goldS:7, goldM:5, goldL:3, rockS:6, rockL:3, diamond:2 } },
+    { target: 2000, time: 50, swing: 1.50, counts: { goldS:7, goldM:5, goldL:4, rockS:7, rockL:3, diamond:3 } },
+    { target: 2350, time: 50, swing: 1.55, counts: { goldS:7, goldM:6, goldL:4, rockS:8, rockL:4, diamond:3 } },
+    { target: 2700, time: 50, swing: 1.60, counts: { goldS:8, goldM:6, goldL:4, rockS:8, rockL:4, diamond:3 } },
+    { target: 3050, time: 45, swing: 1.65, counts: { goldS:8, goldM:6, goldL:5, rockS:9, rockL:4, diamond:4 } },
+    { target: 3400, time: 45, swing: 1.70, counts: { goldS:8, goldM:7, goldL:5, rockS:9, rockL:5, diamond:4 } },
+    { target: 3800, time: 45, swing: 1.75, counts: { goldS:9, goldM:7, goldL:5, rockS:10, rockL:5, diamond:4 } },
+    { target: 4200, time: 45, swing: 1.80, counts: { goldS:9, goldM:7, goldL:6, rockS:10, rockL:5, diamond:5 } },
+    { target: 4700, time: 40, swing: 1.85, counts: { goldS:9, goldM:8, goldL:6, rockS:11, rockL:6, diamond:5 } },
+    { target: 5200, time: 40, swing: 1.90, counts: { goldS:10, goldM:8, goldL:6, rockS:11, rockL:6, diamond:5 } },
+    { target: 5700, time: 40, swing: 1.95, counts: { goldS:10, goldM:8, goldL:7, rockS:12, rockL:6, diamond:6 } },
+    { target: 6300, time: 40, swing: 2.00, counts: { goldS:10, goldM:9, goldL:7, rockS:12, rockL:7, diamond:6 } },
+    { target: 7000, time: 40, swing: 2.05, counts: { goldS:11, goldM:9, goldL:7, rockS:12, rockL:7, diamond:7 } },
+  ];
 
   function levelConfig(level) {
+    if (level <= LEVELS.length) return LEVELS[level - 1];
+    // Beyond L20: keep scaling slowly, capped item counts so layout stays placeable.
+    const extra = level - LEVELS.length;
+    const base = LEVELS[LEVELS.length - 1];
     return {
-      target: 650 + (level - 1) * 350,
-      time: 60,
+      target: base.target + extra * 600,
+      time: 40,
+      swing: Math.min(2.4, base.swing + extra * 0.02),
       counts: {
-        goldS:   3 + Math.floor(level / 2),
-        goldM:   2 + Math.floor(level / 3),
-        goldL:   1 + Math.floor(level / 4),
-        rockS:   2 + level,
-        rockL:   1 + Math.floor(level / 2),
-        diamond: 1 + Math.floor(level / 3),
+        goldS:   Math.min(12, base.counts.goldS + Math.floor(extra / 2)),
+        goldM:   Math.min(10, base.counts.goldM + Math.floor(extra / 3)),
+        goldL:   Math.min(8,  base.counts.goldL + Math.floor(extra / 4)),
+        rockS:   Math.min(14, base.counts.rockS + Math.floor(extra / 2)),
+        rockL:   Math.min(8,  base.counts.rockL + Math.floor(extra / 3)),
+        diamond: Math.min(8,  base.counts.diamond + Math.floor(extra / 3)),
       }
     };
   }
@@ -219,40 +263,43 @@
 
   function placeItems(counts) {
     const placed = [];
-    const minY = GROUND_Y + 60;
+    const minY = GROUND_Y + 50;
     const maxY = H - 30;
-    const minX = 30, maxX = W - 30;
-    for (const [kind, n] of Object.entries(counts)) {
+    const minX = 25, maxX = W - 25;
+    // Place biggest items first so they're more likely to find room.
+    const order = ['goldL', 'rockL', 'goldM', 'rockS', 'goldS', 'diamond'];
+    for (const kind of order) {
+      const n = counts[kind] || 0;
       const def = ITEMS[kind];
       for (let i = 0; i < n; i++) {
         let tries = 0, ok = false, x, y;
-        while (!ok && tries < 80) {
+        while (!ok && tries < 200) {
           x = rand(minX + def.r, maxX - def.r);
           y = rand(minY + def.r, maxY - def.r);
           ok = true;
           for (const p of placed) {
             const dx = p.x - x, dy = p.y - y;
-            if (Math.hypot(dx, dy) < p.r + def.r + 6) { ok = false; break; }
+            if (Math.hypot(dx, dy) < p.r + def.r + 5) { ok = false; break; }
           }
           tries++;
         }
-        placed.push({ kind, x, y, r: def.r, value: def.value, weight: def.weight, caught: false });
+        if (ok) placed.push({ kind, x, y, r: def.r, value: def.value, weight: def.weight, caught: false });
       }
     }
     return placed;
   }
 
-  function resetHook() {
+  function resetHook(swingSpeed) {
     return {
       x: miner.x,
       y: miner.y + 30,
-      angle: -Math.PI / 2,
-      swingSpeed: 1.6,
+      angle: 0,
+      swingSpeed: swingSpeed || 1.6,
       swingDir: 1,
       length: 30,
       state: 'swing',
       caught: null,
-      reelSpeed: 360,
+      reelSpeed: 380,
     };
   }
 
@@ -266,13 +313,15 @@
       maxTime: cfg.time,
     };
     miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
-    hook = resetHook();
+    hook = resetHook(cfg.swing);
     items = placeItems(cfg.counts);
+    popups = [];
 
     ui.score.textContent = state.score;
     ui.target.textContent = state.target;
     ui.level.textContent = level;
     ui.time.textContent = Math.ceil(state.timeLeft);
+    ui.totalScore.textContent = totalScore;
 
     ui.start.classList.add('hidden');
     ui.level_.classList.add('hidden');
@@ -287,15 +336,18 @@
   function endLevel() {
     running = false;
     cancelAnimationFrame(raf);
-    totalScore += state.score;
     if (state.score >= state.target) {
+      totalScore += state.score;
+      ui.totalScore.textContent = totalScore;
       ui.levelTitle.textContent = `第 ${currentLevel} 关 通关！`;
-      ui.levelMsg.innerHTML = `本关得分: <b>${state.score}</b><br>总分: <b>${totalScore}</b>`;
-      ui.nextBtn.textContent = '下一关';
+      ui.levelMsg.innerHTML =
+        `本关得分: <b>${state.score}</b>　目标: ${state.target}<br>累计总分: <b>${totalScore}</b>`;
+      ui.nextBtn.textContent = `进入第 ${currentLevel + 1} 关`;
       ui.nextBtn.onclick = () => startLevel(currentLevel + 1);
       ui.level_.classList.remove('hidden');
     } else {
-      ui.gameOverMsg.innerHTML = `未达成目标 ${state.target}<br>本关: ${state.score}　总分: ${totalScore}`;
+      ui.gameOverMsg.innerHTML =
+        `差了 <b>${state.target - state.score}</b> 分<br>本关得分: ${state.score}　目标: ${state.target}<br>累计总分: ${totalScore}`;
       ui.gameOver.classList.remove('hidden');
     }
   }
@@ -345,12 +397,23 @@
         if (hook.caught) {
           state.score += hook.caught.value;
           ui.score.textContent = state.score;
+          const isGoodLoot = hook.caught.kind === 'diamond' || hook.caught.kind.startsWith('gold');
+          popups.push({
+            x: miner.x,
+            y: miner.y + 20,
+            text: '+' + hook.caught.value,
+            color: isGoodLoot ? '#FFD700' : '#bbb',
+            life: 1.0,
+          });
           items = items.filter(i => i !== hook.caught);
           hook.caught = null;
         }
         hook.state = 'swing';
       }
     }
+
+    for (const p of popups) { p.y -= 30 * dt; p.life -= dt; }
+    popups = popups.filter(p => p.life > 0);
   }
 
   function hookTip() {
@@ -385,6 +448,20 @@
     drawMiner();
     drawRopeAndHook();
     for (const it of items) drawItem(it);
+
+    // score popups
+    for (const p of popups) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 3;
+      ctx.font = 'bold 24px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.strokeText(p.text, p.x, p.y);
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.restore();
+    }
 
     const w = (state.timeLeft / state.maxTime) * (W - 40);
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -519,8 +596,9 @@
 
   ui.startBtn.onclick = () => { totalScore = 0; startLevel(1); };
   ui.restartBtn.onclick = () => { totalScore = 0; startLevel(1); };
+  ui.retryBtn.onclick = () => { startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
-  for (const b of [ui.startBtn, ui.restartBtn, ui.nextBtn]) {
+  for (const b of [ui.startBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn]) {
     b.addEventListener('touchstart', e => { e.preventDefault(); b.click(); }, { passive: false });
   }
 
