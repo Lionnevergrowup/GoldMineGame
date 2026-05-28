@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>黄金矿工 Gold Miner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #1a1a2e;
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  #wrap {
+    position: relative;
+    width: 800px;
+    max-width: 100vw;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: linear-gradient(#87CEEB 0%, #87CEEB 25%, #8B4513 25%, #654321 100%);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    cursor: pointer;
+  }
+  #hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    font-weight: 700;
+    text-shadow: 2px 2px 0 #000;
+    font-size: 18px;
+  }
+  #hud .col { display: flex; flex-direction: column; gap: 4px; }
+  #hud .right { text-align: right; }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    pointer-events: auto;
+    text-align: center;
+    padding: 24px;
+  }
+  .overlay h1 { font-size: 42px; margin-bottom: 12px; color: #FFD700; }
+  .overlay h2 { font-size: 28px; margin-bottom: 16px; color: #FFD700; }
+  .overlay p { font-size: 16px; line-height: 1.7; margin-bottom: 8px; max-width: 520px; }
+  .overlay button {
+    margin-top: 18px;
+    padding: 12px 32px;
+    font-size: 20px;
+    background: #FFD700;
+    color: #1a1a2e;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 700;
+  }
+  .overlay button:hover { background: #FFA500; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <div id="hud">
+    <div class="col">
+      <div>分数: <span id="score">0</span></div>
+      <div>目标: <span id="target">650</span></div>
+    </div>
+    <div class="col right">
+      <div>第 <span id="level">1</span> 关</div>
+      <div>时间: <span id="time">60</span></div>
+    </div>
+  </div>
+
+  <div id="startScreen" class="overlay">
+    <h1>⛏ 黄金矿工 ⛏</h1>
+    <p>点击屏幕 或 按 空格键 放下抓钩</p>
+    <p>抓住金子、钻石得分；岩石重而少分</p>
+    <p>每关需要达到目标分数才能通过</p>
+    <button id="startBtn">开始游戏</button>
+  </div>
+
+  <div id="levelScreen" class="overlay hidden">
+    <h2 id="levelTitle">关卡完成！</h2>
+    <p id="levelMsg"></p>
+    <button id="nextBtn">下一关</button>
+  </div>
+
+  <div id="gameOverScreen" class="overlay hidden">
+    <h2>游戏结束</h2>
+    <p id="gameOverMsg"></p>
+    <button id="restartBtn">重新开始</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const GROUND_Y = 150;
+
+  const $ = id => document.getElementById(id);
+  const ui = {
+    score: $('score'), target: $('target'), level: $('level'), time: $('time'),
+    start: $('startScreen'), startBtn: $('startBtn'),
+    level_: $('levelScreen'), levelTitle: $('levelTitle'), levelMsg: $('levelMsg'), nextBtn: $('nextBtn'),
+    gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'), restartBtn: $('restartBtn'),
+  };
+
+  // Item definitions: kind, color(s), radius, value, weight (reel speed factor: higher = slower)
+  const ITEMS = {
+    goldS:   { color: '#FFD700', stroke: '#B8860B', r: 14, value: 50,  weight: 1.6 },
+    goldM:   { color: '#FFD700', stroke: '#B8860B', r: 22, value: 100, weight: 2.4 },
+    goldL:   { color: '#FFD700', stroke: '#B8860B', r: 34, value: 250, weight: 4.0 },
+    rockS:   { color: '#888',    stroke: '#444',    r: 18, value: 10,  weight: 3.2 },
+    rockL:   { color: '#888',    stroke: '#444',    r: 32, value: 20,  weight: 5.0 },
+    diamond: { color: '#5DE2FF', stroke: '#1B8FB6', r: 10, value: 600, weight: 0.8 },
+  };
+
+  let state, items, hook, miner, timer, lastTime, raf;
+  let running = false;
+  let currentLevel = 1;
+  let totalScore = 0;
+
+  function levelConfig(level) {
+    return {
+      target: 650 + (level - 1) * 350,
+      time: 60,
+      counts: {
+        goldS:   3 + Math.floor(level / 2),
+        goldM:   2 + Math.floor(level / 3),
+        goldL:   1 + Math.floor(level / 4),
+        rockS:   2 + level,
+        rockL:   1 + Math.floor(level / 2),
+        diamond: 1 + Math.floor(level / 3),
+      }
+    };
+  }
+
+  function rand(min, max) { return Math.random() * (max - min) + min; }
+
+  function placeItems(counts) {
+    const placed = [];
+    const minY = GROUND_Y + 60;
+    const maxY = H - 30;
+    const minX = 30, maxX = W - 30;
+
+    for (const [kind, n] of Object.entries(counts)) {
+      const def = ITEMS[kind];
+      for (let i = 0; i < n; i++) {
+        let tries = 0, ok = false, x, y;
+        while (!ok && tries < 80) {
+          x = rand(minX + def.r, maxX - def.r);
+          y = rand(minY + def.r, maxY - def.r);
+          ok = true;
+          for (const p of placed) {
+            const dx = p.x - x, dy = p.y - y;
+            if (Math.hypot(dx, dy) < p.r + def.r + 6) { ok = false; break; }
+          }
+          tries++;
+        }
+        placed.push({ kind, x, y, r: def.r, value: def.value, weight: def.weight, caught: false });
+      }
+    }
+    return placed;
+  }
+
+  function resetHook() {
+    return {
+      x: miner.x,
+      y: miner.y + 30,
+      angle: -Math.PI / 2,        // pointing straight down at 0; we use angle from vertical
+      swingSpeed: 1.6,            // rad/sec
+      swingDir: 1,
+      length: 30,
+      state: 'swing',             // 'swing' | 'extend' | 'reel'
+      caught: null,
+      reelSpeed: 360,             // px/sec when empty
+    };
+  }
+
+  function startLevel(level) {
+    currentLevel = level;
+    const cfg = levelConfig(level);
+    state = {
+      score: 0,
+      target: cfg.target,
+      timeLeft: cfg.time,
+      maxTime: cfg.time,
+    };
+    miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
+    hook = resetHook();
+    items = placeItems(cfg.counts);
+
+    ui.score.textContent = state.score;
+    ui.target.textContent = state.target;
+    ui.level.textContent = level;
+    ui.time.textContent = Math.ceil(state.timeLeft);
+
+    ui.start.classList.add('hidden');
+    ui.level_.classList.add('hidden');
+    ui.gameOver.classList.add('hidden');
+
+    running = true;
+    lastTime = performance.now();
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(loop);
+  }
+
+  function endLevel() {
+    running = false;
+    cancelAnimationFrame(raf);
+    totalScore += state.score;
+    if (state.score >= state.target) {
+      ui.levelTitle.textContent = `第 ${currentLevel} 关 通关！`;
+      ui.levelMsg.innerHTML = `本关得分: <b>${state.score}</b><br>总分: <b>${totalScore}</b>`;
+      ui.nextBtn.textContent = '下一关';
+      ui.nextBtn.onclick = () => startLevel(currentLevel + 1);
+      ui.level_.classList.remove('hidden');
+    } else {
+      ui.gameOverMsg.innerHTML = `未达成目标 ${state.target}<br>本关: ${state.score}　总分: ${totalScore}`;
+      ui.gameOver.classList.remove('hidden');
+    }
+  }
+
+  function dropHook() {
+    if (hook.state === 'swing') {
+      hook.state = 'extend';
+    }
+  }
+
+  function update(dt) {
+    state.timeLeft -= dt;
+    ui.time.textContent = Math.max(0, Math.ceil(state.timeLeft));
+    if (state.timeLeft <= 0) {
+      state.timeLeft = 0;
+      endLevel();
+      return;
+    }
+
+    if (hook.state === 'swing') {
+      hook.angle += hook.swingSpeed * hook.swingDir * dt;
+      const maxA = 1.25;  // about ~72 degrees each side
+      if (hook.angle > maxA) { hook.angle = maxA; hook.swingDir = -1; }
+      if (hook.angle < -maxA) { hook.angle = -maxA; hook.swingDir = 1; }
+      hook.length = 30;
+    } else if (hook.state === 'extend') {
+      hook.length += 360 * dt;
+      // out of bounds -> reel
+      const tip = hookTip();
+      if (tip.y > H + 20 || tip.x < -20 || tip.x > W + 20) {
+        hook.state = 'reel';
+      } else {
+        for (const it of items) {
+          if (it.caught) continue;
+          const dx = tip.x - it.x, dy = tip.y - it.y;
+          if (Math.hypot(dx, dy) < it.r) {
+            it.caught = true;
+            hook.caught = it;
+            hook.state = 'reel';
+            break;
+          }
+        }
+      }
+    } else if (hook.state === 'reel') {
+      const factor = hook.caught ? hook.caught.weight : 1;
+      hook.length -= (hook.reelSpeed / factor) * dt;
+      if (hook.caught) {
+        const tip = hookTip();
+        hook.caught.x = tip.x;
+        hook.caught.y = tip.y;
+      }
+      if (hook.length <= 30) {
+        hook.length = 30;
+        if (hook.caught) {
+          state.score += hook.caught.value;
+          ui.score.textContent = state.score;
+          items = items.filter(i => i !== hook.caught);
+          hook.caught = null;
+        }
+        hook.state = 'swing';
+      }
+    }
+  }
+
+  function hookTip() {
+    // angle 0 is straight down; convert to canvas coords
+    const a = hook.angle;
+    return {
+      x: miner.x + Math.sin(a) * hook.length,
+      y: (miner.y + 30) + Math.cos(a) * hook.length,
+    };
+  }
+
+  function draw() {
+    // sky already from CSS gradient, but also paint to canvas for screenshot
+    ctx.fillStyle = '#87CEEB';
+    ctx.fillRect(0, 0, W, GROUND_Y);
+    // sun
+    ctx.fillStyle = '#FFE066';
+    ctx.beginPath(); ctx.arc(W - 80, 60, 30, 0, Math.PI * 2); ctx.fill();
+    // clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    drawCloud(120, 50, 28);
+    drawCloud(300, 80, 22);
+    drawCloud(560, 40, 26);
+
+    // ground
+    const grd = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+    grd.addColorStop(0, '#8B5A2B');
+    grd.addColorStop(1, '#3E2A14');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    // grass strip
+    ctx.fillStyle = '#3CB371';
+    ctx.fillRect(0, GROUND_Y - 6, W, 6);
+
+    // platform for miner
+    ctx.fillStyle = '#5C3317';
+    ctx.fillRect(miner.x - 50, GROUND_Y - 12, 100, 6);
+
+    // miner body
+    drawMiner();
+
+    // rope + hook
+    drawRopeAndHook();
+
+    // items
+    for (const it of items) drawItem(it);
+
+    // overlay time bar
+    const w = (state.timeLeft / state.maxTime) * (W - 40);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(20, H - 18, W - 40, 8);
+    ctx.fillStyle = state.timeLeft < 10 ? '#FF4136' : '#FFD700';
+    ctx.fillRect(20, H - 18, Math.max(0, w), 8);
+  }
+
+  function drawCloud(x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.arc(x + r, y + 4, r * 0.8, 0, Math.PI * 2);
+    ctx.arc(x - r, y + 4, r * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawMiner() {
+    const { x, y } = miner;
+    // legs
+    ctx.fillStyle = '#1f3a8a';
+    ctx.fillRect(x - 14, y + 30, 10, 22);
+    ctx.fillRect(x + 4, y + 30, 10, 22);
+    // body
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x - 18, y, 36, 34);
+    // arms
+    ctx.fillStyle = '#FFDAB9';
+    ctx.fillRect(x - 24, y + 4, 8, 22);
+    ctx.fillRect(x + 16, y + 4, 8, 22);
+    // head
+    ctx.fillStyle = '#FFDAB9';
+    ctx.beginPath();
+    ctx.arc(x, y - 12, 14, 0, Math.PI * 2);
+    ctx.fill();
+    // helmet
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(x, y - 14, 15, Math.PI, 0);
+    ctx.fill();
+    ctx.fillRect(x - 17, y - 15, 34, 4);
+    // helmet light
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath();
+    ctx.arc(x, y - 22, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // eyes
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 5, y - 12, 2, 2);
+    ctx.fillRect(x + 3, y - 12, 2, 2);
+  }
+
+  function drawRopeAndHook() {
+    const start = { x: miner.x, y: miner.y + 30 };
+    const tip = hookTip();
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+
+    // hook shape
+    const a = hook.angle;
+    ctx.save();
+    ctx.translate(tip.x, tip.y);
+    ctx.rotate(a);
+    ctx.strokeStyle = '#C0C0C0';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 10);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 14, 6, Math.PI * 0.15, Math.PI * 0.85, false);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawItem(it) {
+    const def = ITEMS[it.kind];
+    ctx.save();
+    if (it.kind === 'diamond') {
+      // diamond shape
+      ctx.fillStyle = def.color;
+      ctx.strokeStyle = def.stroke;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(it.x, it.y - it.r);
+      ctx.lineTo(it.x + it.r, it.y);
+      ctx.lineTo(it.x, it.y + it.r);
+      ctx.lineTo(it.x - it.r, it.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.beginPath();
+      ctx.moveTo(it.x - it.r * 0.4, it.y - it.r * 0.2);
+      ctx.lineTo(it.x, it.y - it.r * 0.6);
+      ctx.lineTo(it.x + it.r * 0.1, it.y - it.r * 0.2);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // gold or rock: circle with shading
+      ctx.fillStyle = def.color;
+      ctx.strokeStyle = def.stroke;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, it.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // highlight
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.beginPath();
+      ctx.arc(it.x - it.r * 0.35, it.y - it.r * 0.35, it.r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      // rock texture
+      if (it.kind.startsWith('rock')) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.beginPath();
+        ctx.arc(it.x + it.r * 0.3, it.y + it.r * 0.1, it.r * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(it.x - it.r * 0.1, it.y + it.r * 0.4, it.r * 0.12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  function loop(now) {
+    if (!running) return;
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+    update(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+
+  // Input
+  function onAction(e) {
+    if (e) e.preventDefault();
+    if (!running) return;
+    dropHook();
+  }
+  canvas.addEventListener('mousedown', onAction);
+  canvas.addEventListener('touchstart', onAction, { passive: false });
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowDown' || e.code === 'Enter') {
+      onAction(e);
+    }
+  });
+
+  ui.startBtn.onclick = () => { totalScore = 0; startLevel(1); };
+  ui.restartBtn.onclick = () => { totalScore = 0; startLevel(1); };
+
+  // initial paint (so canvas isn't blank behind overlay)
+  miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
+  hook = resetHook();
+  items = [];
+  state = { score: 0, target: 650, timeLeft: 60, maxTime: 60 };
+  draw();
+})();
+</script>
+</body>
+</html>
