@@ -103,9 +103,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.25);
+    background: rgba(0, 0, 0, 0.45);
     border-color: rgba(255, 215, 0, 0.6);
     color: #FFD700;
+    z-index: 20;       /* stay above overlays so reset is always reachable */
   }
   #muteBtn     { left: 3vmin; }
   #settingsBtn { left: calc(3vmin + clamp(46px, 9vmin, 76px) + 10px); }
@@ -159,6 +160,30 @@
   }
   .overlay button.ghost:active { background: rgba(255, 80, 80, 0.25); }
   .hidden { display: none !important; }
+
+  #portraitHint {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: #FFD700;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 700;
+    z-index: 40;
+    pointer-events: none;
+    animation: fadeBlink 2.4s ease-in-out infinite;
+  }
+  @keyframes fadeBlink { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+
+  /* Drop button gentle pulse during play to invite tap on first level */
+  @keyframes dropPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
+    50%      { box-shadow: 0 0 0 10px rgba(255, 215, 0, 0.18); }
+  }
+  #dropBtn.hint { animation: dropPulse 1.4s ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -199,6 +224,19 @@
     <h2 id="levelTitle">关卡完成！</h2>
     <p id="levelMsg"></p>
     <button id="nextBtn">下一关</button>
+  </div>
+
+  <div id="confirmScreen" class="overlay hidden" style="z-index: 30;">
+    <h2 id="confirmTitle">确认</h2>
+    <p id="confirmMsg"></p>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+      <button id="confirmOk">确定</button>
+      <button id="confirmCancel" class="ghost" style="margin-top:0;">取消</button>
+    </div>
+  </div>
+
+  <div id="portraitHint" class="hidden">
+    <span>🔄 横屏体验更好</span>
   </div>
 
   <div id="settingsScreen" class="overlay hidden">
@@ -242,9 +280,22 @@
     settingsProgress: $('settingsProgress'), settingsBest: $('settingsBest'),
     settingsBestScore: $('settingsBestScore'),
     resumeBtn: $('resumeBtn'), settingsResetBtn: $('settingsResetBtn'),
+    confirm_: $('confirmScreen'), confirmTitle: $('confirmTitle'),
+    confirmMsg: $('confirmMsg'), confirmOk: $('confirmOk'), confirmCancel: $('confirmCancel'),
+    portraitHint: $('portraitHint'),
     dropBtn: $('dropBtn'), tapZone: $('tapZone'),
     muteBtn: $('muteBtn'),
   };
+
+  // Custom in-page confirm modal — replaces native confirm() which looks bad on iOS
+  function askConfirm(msg, onOk, title) {
+    ui.confirmTitle.textContent = title || '确认';
+    ui.confirmMsg.textContent = msg;
+    ui.confirm_.classList.remove('hidden');
+    const cleanup = () => ui.confirm_.classList.add('hidden');
+    ui.confirmOk.onclick = () => { cleanup(); onOk(); };
+    ui.confirmCancel.onclick = cleanup;
+  }
 
   // ---- Audio module: BGM (procedural pentatonic loop) + SFX ----
   const audio = (() => {
@@ -532,6 +583,10 @@
     ui.level_.classList.add('hidden');
     ui.gameOver.classList.add('hidden');
 
+    // Pulse the drop button only on L1 to draw attention to the control
+    if (level === 1) ui.dropBtn.classList.add('hint');
+    else ui.dropBtn.classList.remove('hint');
+
     running = true;
     lastTime = performance.now();
     inputLockUntil = lastTime + 400;  // brief grace period so tap-through can't drop the hook immediately
@@ -562,10 +617,12 @@
 
   function dropHook() {
     if (!running) return;
+    if (paused) return;
     if (performance.now() < inputLockUntil) return;
     if (hook.state === 'swing') {
       hook.state = 'extend';
       audio.sfxDrop();
+      ui.dropBtn.classList.remove('hint');  // first drop kills the pulse hint
     }
   }
 
@@ -592,6 +649,8 @@
           if (Math.hypot(dx, dy) < it.r) {
             it.caught = true;
             hook.caught = it;
+            hook.catchX = it.x;   // remember where the catch happened for popup origin
+            hook.catchY = it.y;
             hook.state = 'reel';
             break;
           }
@@ -616,11 +675,12 @@
           else if (hook.caught.kind.startsWith('gold')) audio.sfxGold(hook.caught.value);
           else audio.sfxRock();
           popups.push({
-            x: miner.x + rand(-30, 30),
-            y: miner.y + 10,
+            // pop above the original catch site so the feedback ties to where the player aimed
+            x: hook.catchX,
+            y: hook.catchY - 15,
             text: '+' + hook.caught.value,
             color: isDiamond ? '#5DE2FF' : (isGoodLoot ? '#FFD700' : '#bbb'),
-            size: isDiamond ? 34 : (hook.caught.value >= 250 ? 30 : 24),
+            size: isDiamond ? 36 : (hook.caught.value >= 250 ? 32 : 26),
             life: 1.6,
             maxLife: 1.6,
           });
@@ -813,6 +873,16 @@
   document.addEventListener('gesturestart', e => e.preventDefault());
   document.addEventListener('dblclick', e => e.preventDefault());
 
+  // Portrait hint: short narrow viewport -> suggest landscape (iPhone in portrait)
+  function checkOrientation() {
+    const portraitPhone = window.innerWidth < window.innerHeight &&
+                          window.innerWidth < 600;
+    ui.portraitHint.classList.toggle('hidden', !portraitPhone);
+  }
+  checkOrientation();
+  window.addEventListener('resize', checkOrientation);
+  window.addEventListener('orientationchange', checkOrientation);
+
   function kickAudio() { audio.ensureCtx(); audio.startBGM(); }
 
   // Show continue / reset / best based on saved progress.
@@ -839,19 +909,26 @@
   }
   refreshStartScreen();
 
-  ui.startBtn.onclick    = () => { kickAudio(); progress.clear(); totalScore = 0; startLevel(1); };
+  function freshStart() { kickAudio(); progress.clear(); totalScore = 0; startLevel(1); }
+  function freshStartGuarded() {
+    const p = progress.load();
+    if (p && p.level > 1) {
+      askConfirm(`将清除当前进度（第 ${p.level} 关）并从第 1 关重新开始`, freshStart, '⚠️ 重新开始');
+    } else freshStart();
+  }
+  ui.startBtn.onclick    = freshStartGuarded;
+  ui.restartBtn.onclick  = freshStartGuarded;
   ui.continueBtn.onclick = () => {
     kickAudio();
     const p = progress.load();
     totalScore = (p && p.totalScore) || 0;
     startLevel((p && p.level) || 1);
   };
-  ui.resetBtn.onclick    = () => { progress.clear(); totalScore = 0; currentLevel = 1; refreshStartScreen(); };
-  ui.restartBtn.onclick  = () => { kickAudio(); progress.clear(); totalScore = 0; startLevel(1); };
+  ui.resetBtn.onclick    = () => askConfirm('清除所有进度吗？', doFullReset, '⚠️ 重置进度');
   ui.retryBtn.onclick    = () => { kickAudio(); startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
   // (also resume AudioContext while the gesture is still active)
-  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsResetBtn]) {
+  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsResetBtn, ui.confirmOk, ui.confirmCancel]) {
     b.addEventListener('touchstart', e => {
       e.preventDefault();
       audio.ensureCtx();
@@ -899,8 +976,7 @@
   }
   bindTap(ui.settingsBtn, openSettings);
   ui.resumeBtn.onclick = closeSettings;
-  ui.settingsResetBtn.onclick = () => {
-    if (!confirm('确认要清除所有进度（关卡、累计分、最佳记录）吗？')) return;
+  function doFullReset() {
     progress.clear();
     totalScore = 0;
     currentLevel = 1;
@@ -913,6 +989,9 @@
     refreshStartScreen();
     ui.start.classList.remove('hidden');
     draw();
+  }
+  ui.settingsResetBtn.onclick = () => {
+    askConfirm('清除所有进度（关卡、累计分、历史最佳）吗？', doFullReset, '⚠️ 重置进度');
   };
 
   miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
