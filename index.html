@@ -416,6 +416,12 @@
       const t = ctx.currentTime;
       [523, 659, 784, 1047].forEach((f, i) => note(f, t + i * 0.12, 0.32, 'square', 0.13));
     }
+    function sfxTargetReached() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      note(880, t,        0.15, 'sine', 0.12);
+      note(1318, t + 0.08, 0.20, 'sine', 0.12);
+    }
     function sfxLevelFail() {
       if (!ctx || muted) return;
       const t = ctx.currentTime;
@@ -424,7 +430,7 @@
 
     return { ensureCtx, startBGM, setMuted, isMuted: () => muted,
              sfxGold, sfxDiamond, sfxRock, sfxDrop,
-             sfxLevelClear, sfxLevelFail };
+             sfxLevelClear, sfxLevelFail, sfxTargetReached };
   })();
 
   // ---- Progress: persist current level + accumulated score in localStorage ----
@@ -570,7 +576,7 @@
       maxTime: cfg.time,
       reelBoost: 0,        // tap during reel adds a short speed boost
       timeOnRocks: 0,      // for failure tip
-      goldMissed: 0,       // items left uncaught
+      everBoosted: false,  // did the player ever use reel boost this level?
       targetReached: false,
     };
     miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
@@ -628,10 +634,16 @@
       audio.sfxLevelClear();
     } else {
       // Helpful hint based on what went wrong
-      let hint = '';
-      if (state.timeOnRocks > 8) hint = '💡 提示: 这关在岩石上花了 ' + Math.round(state.timeOnRocks) + ' 秒，下次避开石头会快很多';
-      else if (state.score < state.target * 0.5) hint = '💡 提示: 优先抓钻石和大金块，分数效率更高';
-      else hint = '💡 提示: 试试连点屏幕加快收钩速度';
+      let hint;
+      if (state.timeOnRocks > 8) {
+        hint = '💡 提示: 这关在岩石上花了 ' + Math.round(state.timeOnRocks) + ' 秒，下次避开石头';
+      } else if (state.score < state.target * 0.4) {
+        hint = '💡 提示: 优先抓钻石（600 分）和大金块（250 分），分数效率最高';
+      } else if (!state.everBoosted) {
+        hint = '💡 提示: 收钩时<b>连点屏幕</b>可以加速！别干等';
+      } else {
+        hint = '💡 提示: 就差一点点，再试一次！';
+      }
       ui.gameOverMsg.innerHTML =
         `差了 <b>${state.target - state.score}</b> 分<br>本关得分: ${state.score}　目标: ${state.target}<br>累计总分: ${totalScore}<br><span style="font-size:0.85em;opacity:0.9;">${hint}</span>`;
       ui.gameOver.classList.remove('hidden');
@@ -651,6 +663,7 @@
       // Tap-spam during reel = small speed boost (gives the player something to DO
       // while reeling a heavy rock instead of just waiting). Capped per drop.
       state.reelBoost = Math.min(state.reelBoost + 60, 400);
+      state.everBoosted = true;
     }
   }
 
@@ -705,6 +718,7 @@
             state.targetReached = true;
             ui.target.style.color = '#3CB371';
             ui.score.style.color = '#3CB371';
+            audio.sfxTargetReached();
           }
           const isDiamond = hook.caught.kind === 'diamond';
           const isGoodLoot = isDiamond || hook.caught.kind.startsWith('gold');
@@ -819,12 +833,21 @@
   function drawRopeAndHook() {
     const start = { x: miner.x, y: miner.y + 30 };
     const tip = hookTip();
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 2;
+    // Boost feedback: tint the rope yellow + thicken while boost is active
+    const boosting = state && state.reelBoost > 30 && hook.state === 'reel';
+    ctx.strokeStyle = boosting ? '#FFD700' : '#222';
+    ctx.lineWidth = boosting ? 3.5 : 2;
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(tip.x, tip.y);
     ctx.stroke();
+    if (boosting) {
+      // little ⚡ spark above hook
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡', tip.x + 14, tip.y - 6);
+    }
 
     const a = hook.angle;
     ctx.save();
