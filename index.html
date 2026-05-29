@@ -209,9 +209,10 @@
 
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
-    <p>点击右下「放钩」按钮 或 屏幕任意处 都能放钩</p>
+    <p>点屏幕任意处 或 右下「放钩」按钮 放下抓钩</p>
     <p>💎钻石 600　🟡大金250／中100／小50　⬛石头 10／20</p>
-    <p>共 20 关，关卡越往后越难，慢慢提升</p>
+    <p>💡 收钩时<b>连点屏幕</b>可以加速！抓到重物别干等</p>
+    <p>共 20 关，难度慢慢上升</p>
     <p id="bestLine" class="hidden">🏆 历史最佳累计: <span id="bestScore">0</span></p>
     <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
       <button id="continueBtn" class="hidden">继续游戏</button>
@@ -245,6 +246,7 @@
     <p id="settingsBest" class="hidden">🏆 历史最佳累计: <span id="settingsBestScore">0</span></p>
     <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
       <button id="resumeBtn">继续游戏</button>
+      <button id="settingsMuteBtn">🔊 音乐: 开</button>
     </div>
     <button id="settingsResetBtn" class="ghost">重置所有进度</button>
   </div>
@@ -281,6 +283,7 @@
     settingsProgress: $('settingsProgress'), settingsBest: $('settingsBest'),
     settingsBestScore: $('settingsBestScore'),
     resumeBtn: $('resumeBtn'), settingsResetBtn: $('settingsResetBtn'),
+    settingsMuteBtn: $('settingsMuteBtn'),
     confirm_: $('confirmScreen'), confirmTitle: $('confirmTitle'),
     confirmMsg: $('confirmMsg'), confirmOk: $('confirmOk'), confirmCancel: $('confirmCancel'),
     portraitHint: $('portraitHint'),
@@ -607,10 +610,19 @@
     if (state.score >= state.target) {
       totalScore += state.score;
       ui.totalScore.textContent = totalScore;
-      ui.levelTitle.textContent = `第 ${currentLevel} 关 通关！`;
-      ui.levelMsg.innerHTML =
-        `本关得分: <b>${state.score}</b>　目标: ${state.target}<br>累计总分: <b>${totalScore}</b>`;
-      ui.nextBtn.textContent = `进入第 ${currentLevel + 1} 关`;
+      const FINAL_LEVEL = 20;
+      if (currentLevel === FINAL_LEVEL) {
+        ui.levelTitle.textContent = '🏆 全部通关！';
+        ui.levelMsg.innerHTML =
+          `恭喜通关全部 ${FINAL_LEVEL} 关！<br>本关得分: <b>${state.score}</b><br>累计总分: <b>${totalScore}</b><br>` +
+          `<span style="font-size:0.9em;opacity:0.9;">还可以继续挑战 +1 关 (无尽模式)</span>`;
+        ui.nextBtn.textContent = '挑战第 21 关';
+      } else {
+        ui.levelTitle.textContent = `第 ${currentLevel} 关 通关！`;
+        ui.levelMsg.innerHTML =
+          `本关得分: <b>${state.score}</b>　目标: ${state.target}<br>累计总分: <b>${totalScore}</b>`;
+        ui.nextBtn.textContent = `进入第 ${currentLevel + 1} 关`;
+      }
       ui.nextBtn.onclick = () => startLevel(currentLevel + 1);
       ui.level_.classList.remove('hidden');
       audio.sfxLevelClear();
@@ -915,6 +927,15 @@
   window.addEventListener('resize', checkOrientation);
   window.addEventListener('orientationchange', checkOrientation);
 
+  // Auto-pause when the tab/app loses focus (iOS users switch apps a lot).
+  // When they come back, open the settings overlay so they confirm before
+  // time starts ticking again.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && running && !paused) {
+      openSettings();
+    }
+  });
+
   function kickAudio() { audio.ensureCtx(); audio.startBGM(); }
 
   // Show continue / reset / best based on saved progress.
@@ -960,7 +981,7 @@
   ui.retryBtn.onclick    = () => { kickAudio(); startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
   // (also resume AudioContext while the gesture is still active)
-  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsResetBtn, ui.confirmOk, ui.confirmCancel]) {
+  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsMuteBtn, ui.settingsResetBtn, ui.confirmOk, ui.confirmCancel]) {
     b.addEventListener('touchstart', e => {
       e.preventDefault();
       audio.ensureCtx();
@@ -968,15 +989,21 @@
     }, { passive: false });
   }
 
-  // Mute toggle
-  function updateMuteIcon() { ui.muteBtn.textContent = audio.isMuted() ? '🔇' : '🔊'; }
-  updateMuteIcon();
-  bindTap(ui.muteBtn, () => {
+  // Mute toggle (corner button + settings panel button stay in sync)
+  function updateMuteIcon() {
+    const m = audio.isMuted();
+    ui.muteBtn.textContent = m ? '🔇' : '🔊';
+    ui.settingsMuteBtn.textContent = m ? '🔇 音乐: 关' : '🔊 音乐: 开';
+  }
+  function toggleMute() {
     audio.ensureCtx();
     audio.setMuted(!audio.isMuted());
     if (!audio.isMuted()) audio.startBGM();
     updateMuteIcon();
-  });
+  }
+  updateMuteIcon();
+  bindTap(ui.muteBtn, toggleMute);
+  ui.settingsMuteBtn.onclick = toggleMute;
 
   // Settings overlay — works any time (start screen, mid-game, after a level)
   function openSettings() {
