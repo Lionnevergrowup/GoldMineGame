@@ -148,6 +148,15 @@
     cursor: pointer;
   }
   .overlay button:active { background: #FFA500; transform: scale(0.97); }
+  .overlay button.ghost {
+    margin-top: 14px;
+    padding: clamp(8px, 1.4vmin, 12px) clamp(18px, 3vmin, 30px);
+    font-size: clamp(13px, 2.2vmin, 18px);
+    background: transparent;
+    color: #ff9e9e;
+    border: 2px solid rgba(255, 100, 100, 0.6);
+  }
+  .overlay button.ghost:active { background: rgba(255, 80, 80, 0.25); }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -176,8 +185,12 @@
     <p>点击右下「放钩」按钮 或 屏幕任意处 都能放钩</p>
     <p>💎钻石 600　🟡大金250／中100／小50　⬛石头 10／20</p>
     <p>共 20 关，关卡越往后越难，慢慢提升</p>
-    <p>第 1 关只要 200 分，很轻松上手</p>
-    <button id="startBtn">开始游戏</button>
+    <p id="bestLine" class="hidden">🏆 历史最佳累计: <span id="bestScore">0</span></p>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+      <button id="continueBtn" class="hidden">继续游戏</button>
+      <button id="startBtn">开始游戏</button>
+    </div>
+    <button id="resetBtn" class="ghost hidden">重置进度</button>
   </div>
 
   <div id="levelScreen" class="overlay hidden">
@@ -208,6 +221,8 @@
     score: $('score'), target: $('target'), level: $('level'), time: $('time'),
     totalScore: $('totalScore'),
     start: $('startScreen'), startBtn: $('startBtn'),
+    continueBtn: $('continueBtn'), resetBtn: $('resetBtn'),
+    bestLine: $('bestLine'), bestScore: $('bestScore'),
     level_: $('levelScreen'), levelTitle: $('levelTitle'), levelMsg: $('levelMsg'), nextBtn: $('nextBtn'),
     gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'),
     restartBtn: $('restartBtn'), retryBtn: $('retryBtn'),
@@ -341,6 +356,29 @@
              sfxLevelClear, sfxLevelFail };
   })();
 
+  // ---- Progress: persist current level + accumulated score in localStorage ----
+  const progress = (() => {
+    const KEY = 'gm_progress';
+    function load() {
+      try {
+        const p = JSON.parse(localStorage.getItem(KEY));
+        if (p && typeof p.level === 'number' && p.level >= 1) return p;
+      } catch (_) {}
+      return null;
+    }
+    function save(level, totalScore) {
+      try {
+        const prev = load() || {};
+        const best = Math.max(prev.best || 0, totalScore || 0);
+        localStorage.setItem(KEY, JSON.stringify({ level, totalScore: totalScore || 0, best }));
+      } catch (_) {}
+    }
+    function clear() {
+      try { localStorage.removeItem(KEY); } catch (_) {}
+    }
+    return { load, save, clear };
+  })();
+
   const ITEMS = {
     goldS:   { color: '#FFD700', stroke: '#B8860B', r: 14, value: 50,  weight: 1.6 },
     goldM:   { color: '#FFD700', stroke: '#B8860B', r: 22, value: 100, weight: 2.4 },
@@ -463,6 +501,9 @@
     hook = resetHook(cfg.swing);
     items = placeItems(cfg.counts);
     popups = [];
+
+    // Snapshot resume point: this level + score carried into it.
+    progress.save(level, totalScore);
 
     ui.score.textContent = state.score;
     ui.target.textContent = state.target;
@@ -756,12 +797,44 @@
   document.addEventListener('dblclick', e => e.preventDefault());
 
   function kickAudio() { audio.ensureCtx(); audio.startBGM(); }
-  ui.startBtn.onclick   = () => { kickAudio(); totalScore = 0; startLevel(1); };
-  ui.restartBtn.onclick = () => { kickAudio(); totalScore = 0; startLevel(1); };
-  ui.retryBtn.onclick   = () => { kickAudio(); startLevel(currentLevel); };
+
+  // Show continue / reset / best based on saved progress.
+  function refreshStartScreen() {
+    const p = progress.load();
+    const hasProgress = p && p.level > 1;
+    if (hasProgress) {
+      ui.continueBtn.textContent = `继续游戏（第 ${p.level} 关）`;
+      ui.continueBtn.classList.remove('hidden');
+      ui.startBtn.textContent = '重新开始';
+      ui.resetBtn.classList.remove('hidden');
+    } else {
+      ui.continueBtn.classList.add('hidden');
+      ui.startBtn.textContent = '开始游戏';
+      ui.resetBtn.classList.add('hidden');
+    }
+    const best = (p && p.best) || 0;
+    if (best > 0) {
+      ui.bestScore.textContent = best;
+      ui.bestLine.classList.remove('hidden');
+    } else {
+      ui.bestLine.classList.add('hidden');
+    }
+  }
+  refreshStartScreen();
+
+  ui.startBtn.onclick    = () => { kickAudio(); progress.clear(); totalScore = 0; startLevel(1); };
+  ui.continueBtn.onclick = () => {
+    kickAudio();
+    const p = progress.load();
+    totalScore = (p && p.totalScore) || 0;
+    startLevel((p && p.level) || 1);
+  };
+  ui.resetBtn.onclick    = () => { progress.clear(); totalScore = 0; currentLevel = 1; refreshStartScreen(); };
+  ui.restartBtn.onclick  = () => { kickAudio(); progress.clear(); totalScore = 0; startLevel(1); };
+  ui.retryBtn.onclick    = () => { kickAudio(); startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
   // (also resume AudioContext while the gesture is still active)
-  for (const b of [ui.startBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn]) {
+  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn]) {
     b.addEventListener('touchstart', e => {
       e.preventDefault();
       audio.ensureCtx();
