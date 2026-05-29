@@ -239,8 +239,8 @@
     <span>🔄 横屏体验更好</span>
   </div>
 
-  <div id="settingsScreen" class="overlay hidden">
-    <h2>⚙️ 设置</h2>
+  <div id="settingsScreen" class="overlay hidden" style="z-index: 25;">
+    <h2 id="settingsTitle">⚙️ 设置</h2>
     <p id="settingsProgress">尚未开始游戏</p>
     <p id="settingsBest" class="hidden">🏆 历史最佳累计: <span id="settingsBestScore">0</span></p>
     <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
@@ -277,6 +277,7 @@
     gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'),
     restartBtn: $('restartBtn'), retryBtn: $('retryBtn'),
     settings: $('settingsScreen'), settingsBtn: $('settingsBtn'),
+    settingsTitle: $('settingsTitle'),
     settingsProgress: $('settingsProgress'), settingsBest: $('settingsBest'),
     settingsBestScore: $('settingsBestScore'),
     resumeBtn: $('resumeBtn'), settingsResetBtn: $('settingsResetBtn'),
@@ -564,6 +565,10 @@
       target: cfg.target,
       timeLeft: cfg.time,
       maxTime: cfg.time,
+      reelBoost: 0,        // tap during reel adds a short speed boost
+      timeOnRocks: 0,      // for failure tip
+      goldMissed: 0,       // items left uncaught
+      targetReached: false,
     };
     miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
     hook = resetHook(cfg.swing);
@@ -578,6 +583,8 @@
     ui.level.textContent = level;
     ui.time.textContent = Math.ceil(state.timeLeft);
     ui.totalScore.textContent = totalScore;
+    ui.score.style.color = '';
+    ui.target.style.color = '';
 
     ui.start.classList.add('hidden');
     ui.level_.classList.add('hidden');
@@ -608,8 +615,13 @@
       ui.level_.classList.remove('hidden');
       audio.sfxLevelClear();
     } else {
+      // Helpful hint based on what went wrong
+      let hint = '';
+      if (state.timeOnRocks > 8) hint = '💡 提示: 这关在岩石上花了 ' + Math.round(state.timeOnRocks) + ' 秒，下次避开石头会快很多';
+      else if (state.score < state.target * 0.5) hint = '💡 提示: 优先抓钻石和大金块，分数效率更高';
+      else hint = '💡 提示: 试试连点屏幕加快收钩速度';
       ui.gameOverMsg.innerHTML =
-        `差了 <b>${state.target - state.score}</b> 分<br>本关得分: ${state.score}　目标: ${state.target}<br>累计总分: ${totalScore}`;
+        `差了 <b>${state.target - state.score}</b> 分<br>本关得分: ${state.score}　目标: ${state.target}<br>累计总分: ${totalScore}<br><span style="font-size:0.85em;opacity:0.9;">${hint}</span>`;
       ui.gameOver.classList.remove('hidden');
       audio.sfxLevelFail();
     }
@@ -623,6 +635,10 @@
       hook.state = 'extend';
       audio.sfxDrop();
       ui.dropBtn.classList.remove('hint');  // first drop kills the pulse hint
+    } else if (hook.state === 'reel' && hook.caught) {
+      // Tap-spam during reel = small speed boost (gives the player something to DO
+      // while reeling a heavy rock instead of just waiting). Capped per drop.
+      state.reelBoost = Math.min(state.reelBoost + 60, 400);
     }
   }
 
@@ -658,17 +674,26 @@
       }
     } else if (hook.state === 'reel') {
       const factor = hook.caught ? hook.caught.weight : 1;
-      hook.length -= (hook.reelSpeed / factor) * dt;
+      // Apply tap boost (decays naturally as we consume it)
+      const boost = state.reelBoost;
+      state.reelBoost = Math.max(0, boost - 240 * dt);
+      hook.length -= (hook.reelSpeed / factor + boost) * dt;
       if (hook.caught) {
         const tip = hookTip();
         hook.caught.x = tip.x;
         hook.caught.y = tip.y;
+        if (hook.caught.kind.startsWith('rock')) state.timeOnRocks += dt;
       }
       if (hook.length <= 30) {
         hook.length = 30;
         if (hook.caught) {
           state.score += hook.caught.value;
           ui.score.textContent = state.score;
+          if (!state.targetReached && state.score >= state.target) {
+            state.targetReached = true;
+            ui.target.style.color = '#3CB371';
+            ui.score.style.color = '#3CB371';
+          }
           const isDiamond = hook.caught.kind === 'diamond';
           const isGoodLoot = isDiamond || hook.caught.kind.startsWith('gold');
           if (isDiamond) audio.sfxDiamond();
@@ -807,6 +832,13 @@
     const def = ITEMS[it.kind];
     ctx.save();
     if (it.kind === 'diamond') {
+      // Soft glow halo so it pops in dense scenes
+      const glow = ctx.createRadialGradient(it.x, it.y, 0, it.x, it.y, it.r * 2.2);
+      glow.addColorStop(0, 'rgba(93, 226, 255, 0.55)');
+      glow.addColorStop(1, 'rgba(93, 226, 255, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(it.x, it.y, it.r * 2.2, 0, Math.PI * 2); ctx.fill();
+      // Diamond shape
       ctx.fillStyle = def.color;
       ctx.strokeStyle = def.stroke;
       ctx.lineWidth = 2;
@@ -817,7 +849,7 @@
       ctx.lineTo(it.x - it.r, it.y);
       ctx.closePath();
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
       ctx.beginPath();
       ctx.moveTo(it.x - it.r * 0.4, it.y - it.r * 0.2);
       ctx.lineTo(it.x, it.y - it.r * 0.6);
@@ -948,7 +980,13 @@
 
   // Settings overlay — works any time (start screen, mid-game, after a level)
   function openSettings() {
-    if (running) paused = true;
+    if (ui.settings.classList.contains('hidden') === false) return;  // already open
+    if (running) {
+      paused = true;
+      ui.settingsTitle.textContent = '⏸ 游戏已暂停';
+    } else {
+      ui.settingsTitle.textContent = '⚙️ 设置';
+    }
     const p = progress.load();
     if (p && p.level >= 1) {
       ui.settingsProgress.textContent =
