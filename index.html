@@ -94,6 +94,21 @@
   }
   #dropBtn .arrow { font-size: clamp(20px, 4vmin, 32px); display: block; margin-bottom: 2px; }
 
+  #muteBtn {
+    left: 3vmin;
+    bottom: 5vmin;
+    width: clamp(46px, 9vmin, 76px);
+    height: clamp(46px, 9vmin, 76px);
+    border-radius: 50%;
+    font-size: clamp(20px, 4vmin, 32px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(255, 215, 0, 0.6);
+    color: #FFD700;
+  }
+
   /* Full-canvas invisible tap zone so tapping anywhere also drops */
   #tapZone {
     position: absolute;
@@ -154,6 +169,7 @@
 
   <div id="tapZone"></div>
   <button id="dropBtn" class="ctrl" aria-label="放钩"><span><span class="arrow">⬇</span>放钩</span></button>
+  <button id="muteBtn" class="ctrl" aria-label="音乐开关">🔊</button>
 
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
@@ -196,7 +212,134 @@
     gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'),
     restartBtn: $('restartBtn'), retryBtn: $('retryBtn'),
     dropBtn: $('dropBtn'), tapZone: $('tapZone'),
+    muteBtn: $('muteBtn'),
   };
+
+  // ---- Audio module: BGM (procedural pentatonic loop) + SFX ----
+  const audio = (() => {
+    let ctx = null, masterGain = null;
+    let muted = false;
+    try { muted = localStorage.getItem('gm_muted') === '1'; } catch (_) {}
+    let bgmStarted = false;
+    let nextBeatTime = 0;
+    let beatIdx = 0;
+    let bgmTimer = null;
+    const MASTER = 0.35;
+
+    function ensureCtx() {
+      try {
+        if (!ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return false;
+          ctx = new AC();
+          masterGain = ctx.createGain();
+          masterGain.gain.value = muted ? 0 : MASTER;
+          masterGain.connect(ctx.destination);
+        }
+        if (ctx.state === 'suspended') ctx.resume();
+        return true;
+      } catch (_) { return false; }
+    }
+
+    function note(freq, start, duration, type, gain) {
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = type || 'triangle';
+      osc.frequency.setValueAtTime(freq, start);
+      env.gain.setValueAtTime(0, start);
+      env.gain.linearRampToValueAtTime(gain, start + 0.015);
+      env.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(env);
+      env.connect(masterGain);
+      osc.start(start);
+      osc.stop(start + duration + 0.05);
+    }
+
+    // 16-step C-major pentatonic melody + 4-bar bass (C–G–Am–F)
+    // C5 523, D5 587, E5 659, G5 784, A5 880
+    const MEL = [523, 659, 784, 659, 587, 784, 880, 784,
+                 659, 523, 587, 659, 784, 659, 587, 523];
+    const BASS = [131, 196, 220, 175]; // C3 G3 A3 F3, one per bar (4 steps)
+    const STEP = 0.28;                 // ~107 BPM 16ths feel ≈ chill mining vibe
+
+    function scheduleBGM() {
+      if (!ctx || !bgmStarted) return;
+      while (nextBeatTime < ctx.currentTime + 0.3) {
+        const i = beatIdx % 16;
+        note(MEL[i], nextBeatTime, 0.22, 'triangle', 0.06);
+        if (i % 4 === 0) note(BASS[i / 4], nextBeatTime, STEP * 4 * 0.95, 'sine', 0.10);
+        nextBeatTime += STEP;
+        beatIdx++;
+      }
+    }
+
+    function startBGM() {
+      if (!ensureCtx()) return;
+      if (bgmStarted) return;
+      bgmStarted = true;
+      nextBeatTime = ctx.currentTime + 0.1;
+      beatIdx = 0;
+      bgmTimer = setInterval(scheduleBGM, 100);
+    }
+
+    function setMuted(m) {
+      muted = m;
+      try { localStorage.setItem('gm_muted', m ? '1' : '0'); } catch (_) {}
+      if (masterGain && ctx) {
+        masterGain.gain.setTargetAtTime(m ? 0 : MASTER, ctx.currentTime, 0.05);
+      }
+    }
+
+    function sfxGold(value) {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      const base = value >= 250 ? 523 : 659;
+      note(base,      t,        0.10, 'square', 0.10);
+      note(base * 1.26, t + 0.07, 0.10, 'square', 0.10);
+      note(base * 1.50, t + 0.14, 0.18, 'square', 0.10);
+    }
+    function sfxDiamond() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      note(1047, t,       0.08, 'sine', 0.12);
+      note(1568, t + 0.06, 0.08, 'sine', 0.12);
+      note(2093, t + 0.12, 0.35, 'sine', 0.12);
+    }
+    function sfxRock() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      note(150, t,        0.18, 'sawtooth', 0.08);
+      note(100, t + 0.05, 0.22, 'sawtooth', 0.06);
+    }
+    function sfxDrop() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(700, t);
+      osc.frequency.exponentialRampToValueAtTime(180, t + 0.18);
+      env.gain.setValueAtTime(0.06, t);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+      osc.connect(env); env.connect(masterGain);
+      osc.start(t); osc.stop(t + 0.25);
+    }
+    function sfxLevelClear() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      [523, 659, 784, 1047].forEach((f, i) => note(f, t + i * 0.12, 0.32, 'square', 0.13));
+    }
+    function sfxLevelFail() {
+      if (!ctx || muted) return;
+      const t = ctx.currentTime;
+      [392, 349, 294, 247].forEach((f, i) => note(f, t + i * 0.16, 0.38, 'triangle', 0.10));
+    }
+
+    return { ensureCtx, startBGM, setMuted, isMuted: () => muted,
+             sfxGold, sfxDiamond, sfxRock, sfxDrop,
+             sfxLevelClear, sfxLevelFail };
+  })();
 
   const ITEMS = {
     goldS:   { color: '#FFD700', stroke: '#B8860B', r: 14, value: 50,  weight: 1.6 },
@@ -350,17 +493,22 @@
       ui.nextBtn.textContent = `进入第 ${currentLevel + 1} 关`;
       ui.nextBtn.onclick = () => startLevel(currentLevel + 1);
       ui.level_.classList.remove('hidden');
+      audio.sfxLevelClear();
     } else {
       ui.gameOverMsg.innerHTML =
         `差了 <b>${state.target - state.score}</b> 分<br>本关得分: ${state.score}　目标: ${state.target}<br>累计总分: ${totalScore}`;
       ui.gameOver.classList.remove('hidden');
+      audio.sfxLevelFail();
     }
   }
 
   function dropHook() {
     if (!running) return;
     if (performance.now() < inputLockUntil) return;
-    if (hook.state === 'swing') hook.state = 'extend';
+    if (hook.state === 'swing') {
+      hook.state = 'extend';
+      audio.sfxDrop();
+    }
   }
 
   function update(dt) {
@@ -406,6 +554,9 @@
           ui.score.textContent = state.score;
           const isDiamond = hook.caught.kind === 'diamond';
           const isGoodLoot = isDiamond || hook.caught.kind.startsWith('gold');
+          if (isDiamond) audio.sfxDiamond();
+          else if (hook.caught.kind.startsWith('gold')) audio.sfxGold(hook.caught.value);
+          else audio.sfxRock();
           popups.push({
             x: miner.x + rand(-30, 30),
             y: miner.y + 10,
@@ -604,13 +755,29 @@
   document.addEventListener('gesturestart', e => e.preventDefault());
   document.addEventListener('dblclick', e => e.preventDefault());
 
-  ui.startBtn.onclick = () => { totalScore = 0; startLevel(1); };
-  ui.restartBtn.onclick = () => { totalScore = 0; startLevel(1); };
-  ui.retryBtn.onclick = () => { startLevel(currentLevel); };
+  function kickAudio() { audio.ensureCtx(); audio.startBGM(); }
+  ui.startBtn.onclick   = () => { kickAudio(); totalScore = 0; startLevel(1); };
+  ui.restartBtn.onclick = () => { kickAudio(); totalScore = 0; startLevel(1); };
+  ui.retryBtn.onclick   = () => { kickAudio(); startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
+  // (also resume AudioContext while the gesture is still active)
   for (const b of [ui.startBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn]) {
-    b.addEventListener('touchstart', e => { e.preventDefault(); b.click(); }, { passive: false });
+    b.addEventListener('touchstart', e => {
+      e.preventDefault();
+      audio.ensureCtx();
+      b.click();
+    }, { passive: false });
   }
+
+  // Mute toggle
+  function updateMuteIcon() { ui.muteBtn.textContent = audio.isMuted() ? '🔇' : '🔊'; }
+  updateMuteIcon();
+  bindTap(ui.muteBtn, () => {
+    audio.ensureCtx();
+    audio.setMuted(!audio.isMuted());
+    if (!audio.isMuted()) audio.startBGM();
+    updateMuteIcon();
+  });
 
   miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
   hook = resetHook();
