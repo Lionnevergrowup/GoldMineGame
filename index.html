@@ -629,7 +629,7 @@
           `本关得分: <b>${state.score}</b>　目标: ${state.target}<br>累计总分: <b>${totalScore}</b>`;
         ui.nextBtn.textContent = `进入第 ${currentLevel + 1} 关`;
       }
-      ui.nextBtn.onclick = () => startLevel(currentLevel + 1);
+      ui.nextBtn.onclick = () => { kickAudio(); startLevel(currentLevel + 1); };
       ui.level_.classList.remove('hidden');
       audio.sfxLevelClear();
     } else {
