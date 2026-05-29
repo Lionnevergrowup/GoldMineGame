@@ -94,8 +94,7 @@
   }
   #dropBtn .arrow { font-size: clamp(20px, 4vmin, 32px); display: block; margin-bottom: 2px; }
 
-  #muteBtn {
-    left: 3vmin;
+  #muteBtn, #settingsBtn {
     bottom: 5vmin;
     width: clamp(46px, 9vmin, 76px);
     height: clamp(46px, 9vmin, 76px);
@@ -108,6 +107,8 @@
     border-color: rgba(255, 215, 0, 0.6);
     color: #FFD700;
   }
+  #muteBtn     { left: 3vmin; }
+  #settingsBtn { left: calc(3vmin + clamp(46px, 9vmin, 76px) + 10px); }
 
   /* Full-canvas invisible tap zone so tapping anywhere also drops */
   #tapZone {
@@ -179,6 +180,7 @@
   <div id="tapZone"></div>
   <button id="dropBtn" class="ctrl" aria-label="放钩"><span><span class="arrow">⬇</span>放钩</span></button>
   <button id="muteBtn" class="ctrl" aria-label="音乐开关">🔊</button>
+  <button id="settingsBtn" class="ctrl" aria-label="设置">⚙️</button>
 
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
@@ -197,6 +199,16 @@
     <h2 id="levelTitle">关卡完成！</h2>
     <p id="levelMsg"></p>
     <button id="nextBtn">下一关</button>
+  </div>
+
+  <div id="settingsScreen" class="overlay hidden">
+    <h2>⚙️ 设置</h2>
+    <p id="settingsProgress">尚未开始游戏</p>
+    <p id="settingsBest" class="hidden">🏆 历史最佳累计: <span id="settingsBestScore">0</span></p>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+      <button id="resumeBtn">继续游戏</button>
+    </div>
+    <button id="settingsResetBtn" class="ghost">重置所有进度</button>
   </div>
 
   <div id="gameOverScreen" class="overlay hidden">
@@ -226,6 +238,10 @@
     level_: $('levelScreen'), levelTitle: $('levelTitle'), levelMsg: $('levelMsg'), nextBtn: $('nextBtn'),
     gameOver: $('gameOverScreen'), gameOverMsg: $('gameOverMsg'),
     restartBtn: $('restartBtn'), retryBtn: $('retryBtn'),
+    settings: $('settingsScreen'), settingsBtn: $('settingsBtn'),
+    settingsProgress: $('settingsProgress'), settingsBest: $('settingsBest'),
+    settingsBestScore: $('settingsBestScore'),
+    resumeBtn: $('resumeBtn'), settingsResetBtn: $('settingsResetBtn'),
     dropBtn: $('dropBtn'), tapZone: $('tapZone'),
     muteBtn: $('muteBtn'),
   };
@@ -394,6 +410,7 @@
   let totalScore = 0;
   let popups = [];   // floating "+50" texts
   let inputLockUntil = 0;  // ignore taps until this timestamp (prevents tap-through on level start)
+  let paused = false;      // settings overlay open => freeze update but keep drawing
 
   // Hand-tuned level curve. Difficulty rises gradually:
   //   - early levels: mostly gold, slow swing, easy targets
@@ -770,7 +787,7 @@
     if (!running) return;
     const dt = Math.min(0.05, (now - lastTime) / 1000);
     lastTime = now;
-    update(dt);
+    if (!paused) update(dt);
     draw();
     raf = requestAnimationFrame(loop);
   }
@@ -834,7 +851,7 @@
   ui.retryBtn.onclick    = () => { kickAudio(); startLevel(currentLevel); };
   // also handle touchstart on overlay buttons so iOS responds immediately
   // (also resume AudioContext while the gesture is still active)
-  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn]) {
+  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsResetBtn]) {
     b.addEventListener('touchstart', e => {
       e.preventDefault();
       audio.ensureCtx();
@@ -851,6 +868,52 @@
     if (!audio.isMuted()) audio.startBGM();
     updateMuteIcon();
   });
+
+  // Settings overlay — works any time (start screen, mid-game, after a level)
+  function openSettings() {
+    if (running) paused = true;
+    const p = progress.load();
+    if (p && p.level >= 1) {
+      ui.settingsProgress.textContent =
+        `当前进度: 第 ${p.level} 关 / 累计 ${p.totalScore || 0} 分`;
+      ui.resumeBtn.classList.remove('hidden');
+    } else {
+      ui.settingsProgress.textContent = '尚未开始游戏';
+      ui.resumeBtn.classList.add('hidden');
+    }
+    const best = (p && p.best) || 0;
+    if (best > 0) {
+      ui.settingsBestScore.textContent = best;
+      ui.settingsBest.classList.remove('hidden');
+    } else {
+      ui.settingsBest.classList.add('hidden');
+    }
+    ui.settings.classList.remove('hidden');
+  }
+  function closeSettings() {
+    ui.settings.classList.add('hidden');
+    if (paused) {
+      paused = false;
+      lastTime = performance.now();  // avoid a huge dt jump on resume
+    }
+  }
+  bindTap(ui.settingsBtn, openSettings);
+  ui.resumeBtn.onclick = closeSettings;
+  ui.settingsResetBtn.onclick = () => {
+    if (!confirm('确认要清除所有进度（关卡、累计分、最佳记录）吗？')) return;
+    progress.clear();
+    totalScore = 0;
+    currentLevel = 1;
+    running = false;
+    paused = false;
+    cancelAnimationFrame(raf);
+    ui.settings.classList.add('hidden');
+    ui.level_.classList.add('hidden');
+    ui.gameOver.classList.add('hidden');
+    refreshStartScreen();
+    ui.start.classList.remove('hidden');
+    draw();
+  };
 
   miner = { x: W / 2, y: GROUND_Y - 50, w: 60, h: 70 };
   hook = resetHook();
