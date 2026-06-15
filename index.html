@@ -111,6 +111,25 @@
   #muteBtn     { left: 3vmin; }
   #settingsBtn { left: calc(3vmin + clamp(46px, 9vmin, 76px) + 10px); }
 
+  /* Refresh button — needed because iOS PWA (add-to-homescreen) has no URL bar */
+  #refreshBtn {
+    top: 3vmin;
+    left: 50%;
+    transform: translateX(-50%);
+    width: clamp(40px, 7.5vmin, 60px);
+    height: clamp(40px, 7.5vmin, 60px);
+    border-radius: 50%;
+    font-size: clamp(18px, 3.5vmin, 26px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    border-color: rgba(255, 215, 0, 0.6);
+    color: #FFD700;
+    z-index: 20;
+  }
+  #refreshBtn:active { transform: translateX(-50%) scale(0.92); }
+
   /* Full-canvas invisible tap zone so tapping anywhere also drops */
   #tapZone {
     position: absolute;
@@ -206,6 +225,7 @@
   <button id="dropBtn" class="ctrl" aria-label="放钩"><span><span class="arrow">⬇</span>放钩</span></button>
   <button id="muteBtn" class="ctrl" aria-label="音乐开关">🔊</button>
   <button id="settingsBtn" class="ctrl" aria-label="设置">⚙️</button>
+  <button id="refreshBtn" class="ctrl" aria-label="刷新">🔄</button>
 
   <div id="startScreen" class="overlay">
     <h1>⛏ 黄金矿工 ⛏</h1>
@@ -289,15 +309,21 @@
     confirmMsg: $('confirmMsg'), confirmOk: $('confirmOk'), confirmCancel: $('confirmCancel'),
     portraitHint: $('portraitHint'),
     dropBtn: $('dropBtn'), tapZone: $('tapZone'),
-    muteBtn: $('muteBtn'),
+    muteBtn: $('muteBtn'), refreshBtn: $('refreshBtn'),
   };
 
   // Custom in-page confirm modal — replaces native confirm() which looks bad on iOS
+  // Auto-pauses the running game while open so time doesn't drain during decision.
   function askConfirm(msg, onOk, title) {
     ui.confirmTitle.textContent = title || '确认';
     ui.confirmMsg.textContent = msg;
+    const causedPause = running && !paused;
+    if (causedPause) paused = true;
     ui.confirm_.classList.remove('hidden');
-    const cleanup = () => ui.confirm_.classList.add('hidden');
+    const cleanup = () => {
+      ui.confirm_.classList.add('hidden');
+      if (causedPause) { paused = false; lastTime = performance.now(); }
+    };
     ui.confirmOk.onclick = () => { cleanup(); onOk(); };
     ui.confirmCancel.onclick = cleanup;
   }
@@ -1187,6 +1213,18 @@
     }
   }
   bindTap(ui.settingsBtn, openSettings);
+
+  // Refresh button — primary purpose is iOS PWA (add-to-homescreen) where
+  // there is no Safari URL bar. Confirm if a game is in progress so we
+  // don't wipe the current level's effort.
+  function doRefresh() { location.reload(); }
+  bindTap(ui.refreshBtn, () => {
+    if (running) {
+      askConfirm('刷新会丢失本关进度（已通过的关卡仍保留）', doRefresh, '🔄 刷新页面');
+    } else {
+      doRefresh();
+    }
+  });
   ui.resumeBtn.onclick = closeSettings;
   function doFullReset() {
     progress.clear();
