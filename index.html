@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -1217,7 +1220,12 @@
   // Refresh button — primary purpose is iOS PWA (add-to-homescreen) where
   // there is no Safari URL bar. Confirm if a game is in progress so we
   // don't wipe the current level's effort.
-  function doRefresh() { location.reload(); }
+  // We replace the URL with a cache-busting query so iOS / GitHub Pages
+  // CDN can't serve a stale index.html.
+  function doRefresh() {
+    const base = location.href.split('?')[0].split('#')[0];
+    location.replace(base + '?_=' + Date.now());
+  }
   bindTap(ui.refreshBtn, () => {
     if (running) {
       askConfirm('刷新会丢失本关进度（已通过的关卡仍保留）', doRefresh, '🔄 刷新页面');
