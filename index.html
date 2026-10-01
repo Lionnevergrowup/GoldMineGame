@@ -184,6 +184,13 @@
   .overlay button.ghost:active { background: rgba(255, 80, 80, 0.25); }
   .hidden { display: none !important; }
 
+  /* Build tag: always visible so you can tell which version is loaded */
+  #verTag {
+    position: absolute; left: 50%; bottom: 0.6vmin; transform: translateX(-50%);
+    font-size: 11px; color: #fff; opacity: 0.55; z-index: 50; pointer-events: none;
+    text-shadow: 0 1px 2px #000; letter-spacing: 0.5px;
+  }
+
   #portraitHint {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 8px);
@@ -244,7 +251,6 @@
       <button id="startBtn">开始游戏</button>
     </div>
     <button id="resetBtn" class="ghost hidden">重置进度</button>
-    <p id="verTag" style="font-size:12px; opacity:0.5; margin:14px 0 0;">版本 2026-10-01 · 声音修复</p>
   </div>
 
   <div id="levelScreen" class="overlay hidden">
@@ -261,6 +267,8 @@
       <button id="confirmCancel" class="ghost" style="margin-top:0;">取消</button>
     </div>
   </div>
+
+  <div id="verTag">v__BUILD__</div>
 
   <div id="portraitHint" class="hidden">
     <span>🔄 横屏体验更好</span>
@@ -289,6 +297,7 @@
 
 <script>
 (function() {
+  if (document.getElementById('verTag').textContent.includes('__BUILD' + '__')) document.getElementById('verTag').textContent = 'v dev';
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;

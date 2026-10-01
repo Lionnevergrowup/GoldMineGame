@@ -24,6 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Stamp build version
+        run: |
+          VER="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+          sed -i "s/__BUILD__/${VER}/" index.html
+          grep -n 'id="verTag"' index.html
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
