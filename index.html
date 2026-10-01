@@ -112,6 +112,7 @@
     z-index: 20;       /* stay above overlays so reset is always reachable */
   }
   #muteBtn     { left: 3vmin; }
+  #muteBtn.off { border-color: rgba(255, 110, 110, 0.9); }   /* muted: make it obvious */
   #settingsBtn { left: calc(3vmin + clamp(46px, 9vmin, 76px) + 10px); }
 
   /* Refresh button — needed because iOS PWA (add-to-homescreen) has no URL bar */
@@ -243,6 +244,7 @@
       <button id="startBtn">开始游戏</button>
     </div>
     <button id="resetBtn" class="ghost hidden">重置进度</button>
+    <p id="verTag" style="font-size:12px; opacity:0.5; margin:14px 0 0;">版本 2026-10-01 · 声音修复</p>
   </div>
 
   <div id="levelScreen" class="overlay hidden">
@@ -332,29 +334,56 @@
   }
 
   // ---- Audio module: BGM (procedural pentatonic loop) + SFX ----
+  // iOS rules this has to live with:
+  //  * an AudioContext only starts from a real user activation (click / touchend — NOT touchstart)
+  //  * app switch / call / Siri leaves it "interrupted" (not just "suspended") until the next tap
+  //  * the hardware silent switch mutes Web Audio unless the audio session is "playback"
   const audio = (() => {
     let ctx = null, masterGain = null;
     let muted = false;
     try { muted = localStorage.getItem('gm_muted') === '1'; } catch (_) {}
-    let bgmStarted = false;
+    let wantBGM = false;     // the game asked for music; the scheduler plays it while the context runs
     let nextBeatTime = 0;
     let beatIdx = 0;
     let bgmTimer = null;
     const MASTER = 0.35;
 
+    const swallow = p => { if (p && p.catch) p.catch(() => {}); };
+    const canPlay = () => !!ctx && !muted && ctx.state === 'running';
+
+    // Create the context if needed and make sure it is running. Safe to call on every tap.
     function ensureCtx() {
+      if (muted) return false;                      // a muted game must not hold the audio session
       try {
+        if (ctx && ctx.state === 'closed') { ctx = null; masterGain = null; }
         if (!ctx) {
           const AC = window.AudioContext || window.webkitAudioContext;
           if (!AC) return false;
           ctx = new AC();
           masterGain = ctx.createGain();
-          masterGain.gain.value = muted ? 0 : MASTER;
+          masterGain.gain.value = MASTER;
           masterGain.connect(ctx.destination);
+          ctx.onstatechange = () => { if (ctx && ctx.state === 'running') resyncBGM(); };
+          // Older iOS unlocks output when a source starts inside the gesture; harmless elsewhere.
+          const s = ctx.createBufferSource();
+          s.buffer = ctx.createBuffer(1, 1, 22050);
+          s.connect(ctx.destination);
+          s.start(0);
+          nextBeatTime = ctx.currentTime + 0.1;
+          beatIdx = 0;
+          if (!bgmTimer) bgmTimer = setInterval(scheduleBGM, 100);
         }
-        if (ctx.state === 'suspended') ctx.resume();
+        // iOS: "playback" session = audible even with the silent switch on (Safari 16.4+)
+        try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
+        if (ctx.state !== 'running') swallow(ctx.resume());   // "suspended" AND iOS "interrupted"
         return true;
       } catch (_) { return false; }
+    }
+
+    // Called on every real user gesture and when the app returns to the foreground.
+    function wake() {
+      if (muted || !wantBGM) return;
+      if (!ctx || ctx.state !== 'running') ensureCtx();
     }
 
     function note(freq, start, duration, type, gain) {
@@ -380,7 +409,7 @@
     const STEP = 0.28;                 // ~107 BPM 16ths feel ≈ chill mining vibe
 
     function scheduleBGM() {
-      if (!ctx || !bgmStarted) return;
+      if (!wantBGM || !canPlay()) return;           // nothing is queued while suspended / interrupted / muted
       while (nextBeatTime < ctx.currentTime + 0.3) {
         const i = beatIdx % 16;
         note(MEL[i], nextBeatTime, 0.22, 'triangle', 0.06);
@@ -390,36 +419,32 @@
       }
     }
 
-    function startBGM() {
-      if (!ensureCtx()) return;
-      if (bgmStarted) return;
-      bgmStarted = true;
-      nextBeatTime = ctx.currentTime + 0.1;
-      beatIdx = 0;
-      bgmTimer = setInterval(scheduleBGM, 100);
-    }
+    function startBGM() { wantBGM = true; ensureCtx(); }
 
-    // After tab resume / AudioContext suspend, scheduled note times can lag
-    // behind ctx.currentTime, producing a burst of overlapping notes.
-    // Call this on visibilitychange-visible to re-anchor the scheduler.
+    // When the context comes back (tap after an app switch, unmute...), scheduled note
+    // times can lag behind ctx.currentTime and play as a burst — re-anchor the scheduler.
     function resyncBGM() {
-      if (!ctx || !bgmStarted) return;
-      if (ctx.state === 'suspended') ctx.resume();
-      if (nextBeatTime < ctx.currentTime + 0.05) {
-        nextBeatTime = ctx.currentTime + 0.05;
-      }
+      if (ctx && nextBeatTime < ctx.currentTime + 0.05) nextBeatTime = ctx.currentTime + 0.05;
     }
 
     function setMuted(m) {
       muted = m;
       try { localStorage.setItem('gm_muted', m ? '1' : '0'); } catch (_) {}
-      if (masterGain && ctx) {
-        masterGain.gain.setTargetAtTime(m ? 0 : MASTER, ctx.currentTime, 0.05);
+      if (!ctx || !masterGain) return;
+      const t = ctx.currentTime;
+      masterGain.gain.cancelScheduledValues(t);
+      if (m) {
+        masterGain.gain.setTargetAtTime(0, t, 0.03);
+        // After the fade, release the audio session so a muted game doesn't hold iOS audio focus.
+        setTimeout(() => { if (muted && ctx && ctx.state === 'running') swallow(ctx.suspend()); }, 250);
+      } else {
+        masterGain.gain.setTargetAtTime(MASTER, t, 0.03);
+        ensureCtx();                                // resumes it if we suspended it while muted
       }
     }
 
     function sfxGold(value) {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       const base = value >= 250 ? 523 : 659;
       note(base,      t,        0.10, 'square', 0.10);
@@ -427,20 +452,20 @@
       note(base * 1.50, t + 0.14, 0.18, 'square', 0.10);
     }
     function sfxDiamond() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       note(1047, t,       0.08, 'sine', 0.12);
       note(1568, t + 0.06, 0.08, 'sine', 0.12);
       note(2093, t + 0.12, 0.35, 'sine', 0.12);
     }
     function sfxRock() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       note(150, t,        0.18, 'sawtooth', 0.08);
       note(100, t + 0.05, 0.22, 'sawtooth', 0.06);
     }
     function sfxDrop() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       const osc = ctx.createOscillator();
       const env = ctx.createGain();
@@ -453,18 +478,18 @@
       osc.start(t); osc.stop(t + 0.25);
     }
     function sfxLevelClear() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       [523, 659, 784, 1047].forEach((f, i) => note(f, t + i * 0.12, 0.32, 'square', 0.13));
     }
     function sfxTargetReached() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       note(880, t,        0.15, 'sine', 0.12);
       note(1318, t + 0.08, 0.20, 'sine', 0.12);
     }
     function sfxBomb() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       // Noise burst for the explosion (filtered white noise)
       const dur = 0.55;
@@ -490,12 +515,12 @@
       note(45, t + 0.04,  0.45, 'sawtooth', 0.15);
     }
     function sfxLevelFail() {
-      if (!ctx || muted) return;
+      if (!canPlay()) return;
       const t = ctx.currentTime;
       [392, 349, 294, 247].forEach((f, i) => note(f, t + i * 0.16, 0.38, 'triangle', 0.10));
     }
 
-    return { ensureCtx, startBGM, resyncBGM, setMuted, isMuted: () => muted,
+    return { ensureCtx, wake, startBGM, setMuted, isMuted: () => muted,
              sfxGold, sfxDiamond, sfxRock, sfxDrop, sfxBomb,
              sfxLevelClear, sfxLevelFail, sfxTargetReached };
   })();
@@ -1108,11 +1133,17 @@
     if (document.hidden) {
       if (running && !paused) openSettings();
     } else {
-      audio.resyncBGM();   // re-anchor scheduler after tab returns
+      audio.wake();        // try to revive audio when the app returns (a tap finishes the job on iOS)
     }
   });
 
-  function kickAudio() { audio.ensureCtx(); audio.startBGM(); }
+  // iOS only (re)starts audio from a real activation event — touchstart is not one.
+  // A tap anywhere revives sound after an app switch, call or Siri interruption.
+  for (const t of ['touchend', 'pointerup', 'mouseup', 'click', 'keydown']) {
+    window.addEventListener(t, () => audio.wake(), { capture: true, passive: true });
+  }
+
+  function kickAudio() { audio.startBGM(); }
 
   // Show continue / reset / best based on saved progress.
   function refreshStartScreen() {
@@ -1155,24 +1186,17 @@
   };
   ui.resetBtn.onclick    = () => askConfirm('清除所有进度吗？', doFullReset, '⚠️ 重置进度');
   ui.retryBtn.onclick    = () => { kickAudio(); startLevel(currentLevel); };
-  // also handle touchstart on overlay buttons so iOS responds immediately
-  // (also resume AudioContext while the gesture is still active)
-  for (const b of [ui.startBtn, ui.continueBtn, ui.resetBtn, ui.restartBtn, ui.retryBtn, ui.nextBtn, ui.resumeBtn, ui.settingsMuteBtn, ui.settingsResetBtn, ui.confirmOk, ui.confirmCancel]) {
-    b.addEventListener('touchstart', e => {
-      e.preventDefault();
-      audio.ensureCtx();
-      b.click();
-    }, { passive: false });
-  }
+  // Overlay buttons use plain click handlers (no touchstart shortcut): `touch-action` already
+  // removes the tap delay, and a real click is the one gesture iOS always accepts for audio.
 
   // Mute toggle (corner button + settings panel button stay in sync)
   function updateMuteIcon() {
     const m = audio.isMuted();
     ui.muteBtn.textContent = m ? '🔇' : '🔊';
+    ui.muteBtn.classList.toggle('off', m);
     ui.settingsMuteBtn.textContent = m ? '🔇 音乐: 关' : '🔊 音乐: 开';
   }
   function toggleMute() {
-    audio.ensureCtx();
     audio.setMuted(!audio.isMuted());
     if (!audio.isMuted()) audio.startBGM();
     updateMuteIcon();
